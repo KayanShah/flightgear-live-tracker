@@ -25,13 +25,92 @@
   }
   #connDot.ok { background: #3ddc65; }
   #connDot.bad { background: #ff6b6b; }
+  #toolbar {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    display: flex; gap: 8px;
+  }
+  .menu { position: relative; }
+  .menu > .menu-trigger {
+    background: #2b2b2b; color: #e8e8e8; border: 1px solid #555;
+    font: 13px -apple-system, sans-serif;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .menu > .menu-trigger::after { content: '▾'; font-size: 10px; opacity: 0.7; }
+  .menu.open > .menu-trigger { background: #3a3a3a; border-color: #777; }
+  .menu-panel {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 1001;
+    background: #2b2b2b; border: 1px solid #555; border-radius: 8px;
+    padding: 6px; display: none; flex-direction: column; gap: 3px;
+    min-width: 190px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .menu.open > .menu-panel { display: flex; }
+  .menu-panel button {
+    background: transparent; color: #e8e8e8; border: none;
+    font: 13px -apple-system, sans-serif; text-align: left;
+    padding: 8px 10px; border-radius: 5px; cursor: pointer;
+  }
+  .menu-panel button:hover { background: #3a3a3a; }
+  .menu-panel button.active,
+  .menu-panel button.toggle-on { background: #2f7dd6; color: #fff; }
+  .menu-panel button.active { background: #ff4444; }
+  .menu-panel button.danger { color: #ff6b6b; }
+  .menu-panel button.danger:hover { background: #a33; color: #fff; }
+  .menu-panel hr { border: none; border-top: 1px solid #444; margin: 3px 0; }
+  #finishLineBtn {
+    position: absolute; top: 10px; right: 190px; z-index: 1001;
+    background: #ff4444; color: #fff; border: 1px solid #ff4444;
+    font: 13px -apple-system, sans-serif;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    display: none;
+  }
+  #colorPicker {
+    display: flex; gap: 5px; align-items: center;
+    padding: 6px 10px;
+  }
+  #colorPicker .swatch {
+    width: 20px; height: 20px; border-radius: 4px; cursor: pointer;
+    border: 2px solid transparent;
+  }
+  #colorPicker .swatch.selected { border-color: #fff; }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="hud"><span id="connDot"></span><span id="hudText">Connecting to FlightGear&hellip;</span><div id="hudFreqBlock"></div><div id="hudAtcBlock"></div></div>
+<div id="toolbar">
+  <div class="menu" id="viewMenu">
+    <button class="menu-trigger">View</button>
+    <div class="menu-panel">
+      <button id="followBtn">Autofollow</button>
+    </div>
+  </div>
+</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+// --- Dropdown menus: click trigger to open, click elsewhere to close ---
+const menus = [...document.querySelectorAll('.menu')];
+menus.forEach((menu) => {
+  menu.querySelector('.menu-trigger').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = menu.classList.contains('open');
+    menus.forEach((m) => m.classList.remove('open'));
+    if (!wasOpen) menu.classList.add('open');
+  });
+});
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.menu-panel')) return; // clicks inside a panel (textarea, swatches) shouldn't close it
+  menus.forEach((m) => m.classList.remove('open'));
+});
+// Selecting a tool closes its menu so it doesn't sit over the map while you work.
+// (Taxi Route's Draw button is excluded — it needs the panel to stay open to show the result.)
+document.querySelectorAll('.menu-panel button:not(#taxiDrawBtn):not(#navlogDrawBtn):not(#navlogClearBtn)').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const menu = btn.closest('.menu');
+    if (menu) menu.classList.remove('open');
+  });
+});
+
 const map = L.map('map', { doubleClickZoom: false }).setView([53.3537, -2.2750], 12); // default: EGCC
 // Reverted from CARTO's Voyager tiles back to plain OSM: CARTO's free
 // anonymous tile CDN started demanding an API key (either a rate-limit
@@ -63,6 +142,21 @@ let hasCentered = false;
 let lastKnownPosition = null; // used to scope taxi-route parsing to the current airport
 const hudText = document.getElementById('hudText');
 const connDot = document.getElementById('connDot');
+
+// --- Autofollow: keep the plane centered as it moves ------------------
+const followBtn = document.getElementById('followBtn');
+let autofollow = false;
+followBtn.addEventListener('click', () => {
+  autofollow = !autofollow;
+  followBtn.classList.toggle('toggle-on', autofollow);
+});
+// A real user drag means they want to look elsewhere — stop fighting them.
+map.on('dragstart', () => {
+  if (autofollow) {
+    autofollow = false;
+    followBtn.classList.remove('toggle-on');
+  }
+});
 
 async function poll() {
   try {
