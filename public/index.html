@@ -83,6 +83,7 @@
     <button class="menu-trigger">View</button>
     <div class="menu-panel">
       <button id="followBtn">Autofollow</button>
+      <button id="headingLineBtn">Heading Line</button>
       <hr />
       <button id="trailClearBtn">Clear Trail</button>
     </div>
@@ -184,6 +185,37 @@ flightLogClearBtn.addEventListener('click', async () => {
     await fetch('/api/flight-log/clear', { method: 'POST' });
   } catch {
     alert('Failed to clear flight log — is the server still running?');
+  }
+});
+
+// --- Heading line: extends from the plane out along current heading ----
+const headingLineBtn = document.getElementById('headingLineBtn');
+let headingLineOn = false;
+let headingLine = null;
+const HEADING_LINE_NM = 5;
+
+function destinationPoint(lat, lon, bearingDeg, distanceNm) {
+  const R = 3440.065;
+  const brng = toRad(bearingDeg);
+  const d = distanceNm / R;
+  const lat1 = toRad(lat);
+  const lon1 = toRad(lon);
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng));
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
+    );
+  return [toDeg(lat2), toDeg(lon2)];
+}
+
+headingLineBtn.addEventListener('click', () => {
+  headingLineOn = !headingLineOn;
+  headingLineBtn.classList.toggle('toggle-on', headingLineOn);
+  if (!headingLineOn && headingLine) {
+    map.removeLayer(headingLine);
+    headingLine = null;
   }
 });
 
