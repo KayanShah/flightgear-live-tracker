@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>FlightGear Live Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+  #hud {
+    position: absolute; top: 10px; left: 50px; z-index: 1000;
+    background: rgba(20,20,20,0.75); color: #e8e8e8;
+    font: 13px/1.5 -apple-system, sans-serif;
+    padding: 8px 12px; border-radius: 6px;
+    pointer-events: none; max-width: 320px;
+  }
+  #hud .stale { color: #ff6b6b; }
+  #hudFreqBlock { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.15); color: #ccc; font-size: 12px; }
+  #hudFreqBlock .freq-airport { color: #8ecbff; font-weight: bold; }
+  #hudAtcBlock { margin-top: 4px; font-size: 12px; }
+  #hudAtcBlock .atc-live { color: #6bdc8a; font-weight: bold; }
+  #hudAtcBlock .atc-none { color: #ffb84d; }
+  #connDot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 6px; background: #888;
+  }
+  #connDot.ok { background: #3ddc65; }
+  #connDot.bad { background: #ff6b6b; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="hud"><span id="connDot"></span><span id="hudText">Connecting to FlightGear&hellip;</span><div id="hudFreqBlock"></div><div id="hudAtcBlock"></div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map', { doubleClickZoom: false }).setView([53.3537, -2.2750], 12); // default: EGCC
+// Reverted from CARTO's Voyager tiles back to plain OSM: CARTO's free
+// anonymous tile CDN started demanding an API key (either a rate-limit
+// change or a policy change on their end), so it's no longer reliable
+// without a paid key. Trade-off: back to local-script place names in
+// non-English regions, but the map actually loads everywhere again.
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+// Arrow points due north (0deg) by default, so rotating it by the exact
+// heading value lines it up correctly — unlike the plane emoji, which
+// most fonts draw pointing up-and-to-the-right, not north.
+const PLANE_SVG =
+  '<svg width="28" height="28" viewBox="0 0 24 24" style="transform-origin:50% 50%;">' +
+  '<path d="M12 2 L18 20 L12 16 L6 20 Z" fill="#ff4444" stroke="#fff" stroke-width="1"/>' +
+  '</svg>';
+
+const planeIcon = L.divIcon({
+  className: 'plane-icon',
+  html: `<div style="width:28px; height:28px;">${PLANE_SVG}</div>`,
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+});
+
+let marker = null;
+let hasCentered = false;
+let lastKnownPosition = null; // used to scope taxi-route parsing to the current airport
+const hudText = document.getElementById('hudText');
+const connDot = document.getElementById('connDot');
+
+async function poll() {
+  try {
+    const res = await fetch('/api/position');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    const { lat, lon, altFt, heading, groundspeedKt } = data;
+    connDot.className = 'ok';
+
+    if (!marker) {
+      marker = L.marker([lat, lon], { icon: planeIcon }).addTo(map);
+    } else {
+      marker.setLatLng([lat, lon]);
+    }
+    const el = marker.getElement();
+    if (el) {
+      const svg = el.querySelector('svg');
+      if (svg) svg.style.transform = `rotate(${heading}deg)`;
+    }
+
+    if (!hasCentered) {
+      map.setView([lat, lon], 13);
+      hasCentered = true;
+    }
+
+    hudText.innerHTML =
+      `Lat: ${lat.toFixed(5)} &nbsp; Lon: ${lon.toFixed(5)}<br/>` +
+      `Alt: ${Math.round(altFt)} ft &nbsp; Hdg: ${Math.round(heading)}&deg; &nbsp; GS: ${Math.round(groundspeedKt)} kt<br/>`;
+  } catch (err) {
+    connDot.className = 'bad';
+    hudText.innerHTML = `<span class="stale">No data from FlightGear (${err.message})</span>`;
+  }
+}
+poll();
+setInterval(poll, 1000);
+
+</script>
+</body>
+</html>
