@@ -83,6 +83,8 @@
     <button class="menu-trigger">View</button>
     <div class="menu-panel">
       <button id="followBtn">Autofollow</button>
+      <hr />
+      <button id="trailClearBtn">Clear Trail</button>
     </div>
   </div>
 </div>
@@ -158,14 +160,58 @@ map.on('dragstart', () => {
   }
 });
 
+// --- Flight trail -------------------------------------------------------
+const trailClearBtn = document.getElementById('trailClearBtn');
+let trailPoints = [];
+let trailLine = null;
+const TRAIL_MAX_POINTS = 10000;
+
+function clearTrail() {
+  trailPoints = [];
+  if (trailLine) {
+    map.removeLayer(trailLine);
+    trailLine = null;
+  }
+}
+trailClearBtn.addEventListener('click', clearTrail);
+
+// Clears the server-side flight-history log (used for turn/maneuver
+// analysis) — separate from the on-screen trail, which is just visual.
+const flightLogClearBtn = document.getElementById('flightLogClearBtn');
+flightLogClearBtn.addEventListener('click', async () => {
+  if (!confirm('Clear the recorded flight log? This cannot be undone.')) return;
+  try {
+    await fetch('/api/flight-log/clear', { method: 'POST' });
+  } catch {
+    alert('Failed to clear flight log — is the server still running?');
+  }
+});
+
+// Appends a trail point only if it's newer than what we already have, so
+// live polling and the background-tab backfill (below) can never double
+// up or go backwards.
+let lastTrailTs = 0;
+function addTrailPoint(lat, lon, ts) {
+  if (ts <= lastTrailTs) return;
+  lastTrailTs = ts;
+  trailPoints.push([lat, lon]);
+  if (trailPoints.length > TRAIL_MAX_POINTS) trailPoints.shift();
+  if (!trailLine) {
+    trailLine = L.polyline(trailPoints, { color: '#ff8844', weight: 2, opacity: 0.8 }).addTo(map);
+  } else {
+    trailLine.setLatLngs(trailPoints);
+  }
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/position');
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    const { lat, lon, altFt, heading, groundspeedKt } = data;
+    const { lat, lon, altFt, heading, groundspeedKt, callsign, ts } = data;
     connDot.className = 'ok';
+    lastKnownPosition = { lat, lon, heading };
 
     if (!marker) {
       marker = L.marker([lat, lon], { icon: planeIcon }).addTo(map);
@@ -178,12 +224,26 @@ async function poll() {
       if (svg) svg.style.transform = `rotate(${heading}deg)`;
     }
 
+    addTrailPoint(lat, lon, ts);
+
+    if (headingLineOn) {
+      const tip = destinationPoint(lat, lon, heading, HEADING_LINE_NM);
+      if (!headingLine) {
+        headingLine = L.polyline([[lat, lon], tip], { color: '#ff4444', weight: 2, dashArray: '2 6' }).addTo(map);
+      } else {
+        headingLine.setLatLngs([[lat, lon], tip]);
+      }
+    }
+
     if (!hasCentered) {
       map.setView([lat, lon], 13);
       hasCentered = true;
+    } else if (autofollow) {
+      map.panTo([lat, lon], { animate: true, duration: 0.8 });
     }
 
     hudText.innerHTML =
+      `${callsign ? `<b>${callsign}</b><br/>` : ''}` +
       `Lat: ${lat.toFixed(5)} &nbsp; Lon: ${lon.toFixed(5)}<br/>` +
       `Alt: ${Math.round(altFt)} ft &nbsp; Hdg: ${Math.round(heading)}&deg; &nbsp; GS: ${Math.round(groundspeedKt)} kt<br/>`;
   } catch (err) {
