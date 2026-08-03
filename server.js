@@ -26,6 +26,7 @@ const PROPS = {
   altFt: 'position/altitude-ft',
   heading: 'orientation/heading-deg',
   groundspeedKt: 'velocities/groundspeed-kt',
+  callsign: 'sim/multiplay/callsign',
 };
 
 async function fetchProp(propPath) {
