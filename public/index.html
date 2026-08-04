@@ -73,6 +73,20 @@
     border: 2px solid transparent;
   }
   #colorPicker .swatch.selected { border-color: #fff; }
+  #measureTooltip {
+    position: absolute; z-index: 1000; display: none;
+    background: rgba(20,20,20,0.85); color: #fff;
+    font: 12px -apple-system, sans-serif;
+    padding: 4px 8px; border-radius: 4px;
+    pointer-events: none; white-space: nowrap;
+    transform: translate(14px, 14px);
+  }
+  #hint {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(20,20,20,0.7); color: #ccc;
+    font: 12px -apple-system, sans-serif; padding: 4px 10px; border-radius: 4px;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -89,6 +103,9 @@
     </div>
   </div>
 </div>
+<div id="measureTooltip"></div>
+<div id="hint">Double-click empty map to measure heading/distance &middot; double-click again to clear</div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // --- Dropdown menus: click trigger to open, click elsewhere to close ---
@@ -285,6 +302,75 @@ async function poll() {
 }
 poll();
 setInterval(poll, 1000);
+
+map.on('dblclick', (e) => {
+  if (addMode) return; // those tools own this click
+
+  toggleMeasure(e.latlng);
+});
+
+// --- Ruler tool: double-click sets an origin, mouse movement shows live
+// heading + distance from it, double-click again clears it.
+const measureTooltip = document.getElementById('measureTooltip');
+let measureOrigin = null;
+let measureLine = null;
+
+function toRad(deg) { return (deg * Math.PI) / 180; }
+function toDeg(rad) { return (rad * 180) / Math.PI; }
+
+function greatCircleDistanceNm(a, b) {
+  const R = 3440.065; // nm
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lng - a.lng);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+function initialBearingDeg(a, b) {
+  const y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
+  const x =
+    Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) -
+    Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function toggleMeasure(latlng) {
+  if (measureOrigin) {
+    clearMeasure();
+    return;
+  }
+  measureOrigin = latlng;
+  measureLine = L.polyline([latlng, latlng], { color: '#00ccff', weight: 2, dashArray: '4 4' }).addTo(map);
+  measureTooltip.style.display = 'block';
+}
+
+function clearMeasure() {
+  measureOrigin = null;
+  if (measureLine) {
+    map.removeLayer(measureLine);
+    measureLine = null;
+  }
+  measureTooltip.style.display = 'none';
+}
+
+map.on('mousemove', (e) => {
+  if (!measureOrigin) return;
+  const dist = greatCircleDistanceNm(measureOrigin, e.latlng);
+  const brg = initialBearingDeg(measureOrigin, e.latlng);
+  measureLine.setLatLngs([measureOrigin, e.latlng]);
+
+  const point = map.latLngToContainerPoint(e.latlng);
+  const mapRect = map.getContainer().getBoundingClientRect();
+  measureTooltip.style.left = `${mapRect.left + point.x}px`;
+  measureTooltip.style.top = `${mapRect.top + point.y}px`;
+  measureTooltip.textContent = `${Math.round(brg).toString().padStart(3, '0')}°  ·  ${dist.toFixed(2)} NM`;
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && measureOrigin) clearMeasure();
+});
 
 </script>
 </body>
