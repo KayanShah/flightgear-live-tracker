@@ -44,6 +44,37 @@ async function fetchPosition() {
   }
   return result;
 }
+const MIME = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+};
+
+function readMarkings() {
+  try {
+    const data = JSON.parse(fs.readFileSync(MARKINGS_FILE, 'utf8'));
+    if (!Array.isArray(data.arcs)) data.arcs = [];
+    return data;
+  } catch {
+    return { labels: [], lines: [], arcs: [] };
+  }
+}
+
+function writeMarkingsAtomic(data) {
+  fs.writeFileSync(MARKINGS_FILE, JSON.stringify(data, null, 2));
+}
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 5_000_000) req.destroy(); // guard against runaway payloads
+    });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.url === '/api/position') {
     try {
@@ -52,6 +83,29 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ...pos, ts: Date.now() }));
     } catch (err) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/markings' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(readMarkings()));
+    return;
+  }
+
+  if (req.url === '/api/markings' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body);
+      if (!Array.isArray(parsed.labels) || !Array.isArray(parsed.lines) || !Array.isArray(parsed.arcs)) {
+        throw new Error('Expected { labels: [], lines: [], arcs: [] }');
+      }
+      writeMarkingsAtomic(parsed);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
     return;

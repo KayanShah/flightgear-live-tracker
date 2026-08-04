@@ -102,6 +102,12 @@
       <button id="trailClearBtn">Clear Trail</button>
     </div>
   </div>
+  <div class="menu" id="markupMenu">
+    <button class="menu-trigger">Markup</button>
+    <div class="menu-panel">
+      <button id="labelBtn">+ Add Label</button>
+    </div>
+  </div>
 </div>
 <div id="measureTooltip"></div>
 <div id="hint">Double-click empty map to measure heading/distance &middot; double-click again to clear</div>
@@ -303,6 +309,101 @@ async function poll() {
 poll();
 setInterval(poll, 1000);
 
+// --- Taxiway / custom label + line editor -----------------------------
+// Labels and lines both live in one markings object, persisted to disk
+// on the server (markings.json) via GET/POST /api/markings, so they
+// survive clearing browser data or switching browsers/machines.
+const markings = { labels: [], lines: [], arcs: [] };
+
+async function loadMarkings() {
+  const res = await fetch('/api/markings');
+  const data = await res.json();
+  markings.labels = data.labels || [];
+  markings.lines = data.lines || [];
+  markings.arcs = data.arcs || [];
+}
+
+async function saveMarkings() {
+  await fetch('/api/markings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(markings),
+  });
+}
+
+const labelBtn = document.getElementById('labelBtn');
+let addMode = false;
+let labelMarkers = new Map(); // id -> L.Marker
+
+function makeLabelIcon(text, colorOverride) {
+  // Manual override wins if set. Otherwise: bare taxiway designators
+  // (A, VA, NB, ...) default to blue; anything ending in a digit is a
+  // numbered holding point, which defaults to yellow.
+  const cls =
+    colorOverride === 'blue'
+      ? 'taxi-label-taxiway'
+      : colorOverride === 'yellow'
+      ? 'taxi-label'
+      : /\d$/.test(text)
+      ? 'taxi-label'
+      : 'taxi-label-taxiway';
+  return L.divIcon({
+    className: 'taxi-label-wrap',
+    html: `<div class="${cls}">${text}</div>`,
+    iconSize: null,
+    iconAnchor: [4, 8],
+  });
+}
+
+function renderLabel(label) {
+  const marker = L.marker([label.lat, label.lon], {
+    icon: makeLabelIcon(label.text, label.color),
+    draggable: true,
+  }).addTo(map);
+
+  marker.on('dragend', () => {
+    const { lat, lng } = marker.getLatLng();
+    label.lat = lat;
+    label.lon = lng;
+    saveMarkings();
+  });
+
+  // Click opens the edit modal (text + colour + delete all in one place).
+  // Shift+click stays as a fast one-step delete shortcut.
+  marker.on('click', (e) => {
+    if (e.originalEvent.shiftKey) {
+      markings.labels = markings.labels.filter((l) => l.id !== label.id);
+      saveMarkings();
+      map.removeLayer(marker);
+      labelMarkers.delete(label.id);
+      return;
+    }
+    openLabelEditor(label, marker);
+  });
+
+  labelMarkers.set(label.id, marker);
+}
+
+labelBtn.addEventListener('click', () => {
+  addMode = !addMode;
+  labelBtn.classList.toggle('active', addMode);
+  labelBtn.textContent = addMode ? 'Click map to place…' : '+ Add Label';
+});
+
+map.on('click', (e) => {
+  if (!addMode) return;
+  const text = prompt('Taxiway/label text (e.g. "A", "Y2", "Rwy 23R"):');
+  addMode = false;
+  labelBtn.classList.remove('active');
+  labelBtn.textContent = '+ Add Label';
+  if (!text) return;
+
+  const label = { id: Date.now() + '-' + Math.random(), lat: e.latlng.lat, lon: e.latlng.lng, text };
+  markings.labels.push(label);
+  saveMarkings();
+  renderLabel(label);
+});
+
 map.on('dblclick', (e) => {
   if (addMode) return; // those tools own this click
 
@@ -370,6 +471,30 @@ map.on('mousemove', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && measureOrigin) clearMeasure();
+});
+
+loadMarkings().then(async () => {
+  // One-time migration: pull in anything saved under the old
+  // localStorage-only version of this tool, then hand it to the server.
+  if (markings.labels.length === 0 && markings.lines.length === 0) {
+    let oldLabels = [];
+    let oldLines = [];
+    try {
+      oldLabels = JSON.parse(localStorage.getItem('fgTrackerLabels')) || [];
+      oldLines = JSON.parse(localStorage.getItem('fgTrackerLines')) || [];
+    } catch {}
+    if (oldLabels.length || oldLines.length) {
+      markings.labels = oldLabels;
+      markings.lines = oldLines;
+      await saveMarkings();
+      localStorage.removeItem('fgTrackerLabels');
+      localStorage.removeItem('fgTrackerLines');
+      console.log(`Migrated ${oldLabels.length} label(s) and ${oldLines.length} line(s) from localStorage to server.`);
+    }
+  }
+  markings.labels.forEach(renderLabel);
+  markings.lines.forEach(renderLine);
+  markings.arcs.forEach(renderArc);
 });
 
 </script>
