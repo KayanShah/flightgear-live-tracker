@@ -108,6 +108,7 @@
     <div class="menu-panel">
       <button id="labelBtn">+ Add Label</button>
       <button id="lineBtn">+ Draw Line</button>
+      <button id="freehandBtn">Freehand</button>
       <div id="colorPicker"></div>
     </div>
   </div>
@@ -547,9 +548,77 @@ map.on('mousemove', (e) => {
 });
 
 map.on('dblclick', (e) => {
-  if (addMode || drawMode) return; // those tools own this click
+  if (addMode || freehandMode || drawMode) return; // those tools own this click
 
   toggleMeasure(e.latlng);
+});
+
+// --- Freehand draw: click-drag to sketch a route/hazard mark-up --------
+const freehandBtn = document.getElementById('freehandBtn');
+let freehandMode = false;
+let freehandDrawing = false;
+let freehandPoints = [];
+let freehandPreview = null;
+
+freehandBtn.addEventListener('click', () => {
+  freehandMode = !freehandMode;
+  freehandBtn.classList.toggle('active', freehandMode);
+  map.dragging[freehandMode ? 'disable' : 'enable']();
+  if (!freehandMode && freehandPreview) {
+    map.removeLayer(freehandPreview);
+    freehandPreview = null;
+    freehandDrawing = false;
+    freehandPoints = [];
+  }
+});
+
+map.on('mousedown', (e) => {
+  if (!freehandMode) return;
+  freehandDrawing = true;
+  freehandPoints = [[e.latlng.lat, e.latlng.lng]];
+  freehandPreview = L.polyline(freehandPoints, { color: currentColor, weight: 3 }).addTo(map);
+});
+
+map.on('mousemove', (e) => {
+  if (!freehandMode || !freehandDrawing) return;
+  freehandPoints.push([e.latlng.lat, e.latlng.lng]);
+  freehandPreview.setLatLngs(freehandPoints);
+});
+
+map.on('mouseup', () => {
+  if (!freehandMode || !freehandDrawing) return;
+  freehandDrawing = false;
+  if (freehandPreview) {
+    map.removeLayer(freehandPreview);
+    freehandPreview = null;
+  }
+  if (freehandPoints.length < 2) {
+    freehandPoints = [];
+    return;
+  }
+  const line = {
+    id: Date.now() + '-' + Math.random(),
+    points: freehandPoints,
+    text: '',
+    color: currentColor,
+    freehand: true,
+  };
+  markings.lines.push(line);
+  strokeStack.push({ type: 'line', id: line.id });
+  saveMarkings();
+  renderLine(line);
+  freehandPoints = [];
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && freehandMode) {
+    freehandDrawing = false;
+    freehandPoints = [];
+    if (freehandPreview) {
+      map.removeLayer(freehandPreview);
+      freehandPreview = null;
+    }
+  }
 });
 
 // --- Ruler tool: double-click sets an origin, mouse movement shows live
