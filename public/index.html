@@ -167,6 +167,10 @@
       <button id="lineBtn">+ Draw Line</button>
       <button id="freehandBtn">Freehand</button>
       <button id="arcBtn">+ Add 90&deg; Arc</button>
+      <hr />
+      <button id="undoBtn">Undo Last Stroke</button>
+      <button id="clearAllBtn" class="danger">Clear All Drawings</button>
+      <button id="clearAllLabelsBtn" class="danger">Clear All Labels</button>
       <div id="colorPicker"></div>
     </div>
   </div>
@@ -784,6 +788,58 @@ document.addEventListener('keydown', (e) => {
       freehandPreview = null;
     }
   }
+});
+
+// --- Undo last stroke / Clear all drawings ------------------------------
+const undoBtn = document.getElementById('undoBtn');
+const clearAllBtn = document.getElementById('clearAllBtn');
+
+undoBtn.addEventListener('click', () => {
+  const stroke = strokeStack.pop();
+  if (!stroke) return;
+  if (stroke.type === 'arc') {
+    removeArc(stroke.id, { save: false });
+  } else {
+    const layer = lineLayers.get(stroke.id);
+    if (layer) map.removeLayer(layer);
+    lineLayers.delete(stroke.id);
+    markings.lines = markings.lines.filter((l) => l.id !== stroke.id);
+  }
+  saveMarkings();
+});
+
+clearAllBtn.addEventListener('click', () => {
+  const total = markings.lines.length + markings.arcs.length;
+  if (total === 0) return;
+  if (!confirm(`Clear all ${total} drawn line(s)/arc(s)/route mark-up? This cannot be undone.`)) return;
+  markings.lines.forEach((l) => {
+    const layer = lineLayers.get(l.id);
+    if (layer) map.removeLayer(layer);
+  });
+  lineLayers.clear();
+  [...markings.arcs].forEach((a) => removeArc(a.id, { save: false }));
+  markings.lines = [];
+  strokeStack = [];
+  saveMarkings();
+});
+
+const clearAllLabelsBtn = document.getElementById('clearAllLabelsBtn');
+clearAllLabelsBtn.addEventListener('click', () => {
+  const total = markings.labels.length;
+  if (total === 0) return;
+  // This wipes every taxiway/holding-point label, not just route imports —
+  // that's potentially hours of calibrated work across many airports, so
+  // it needs a harder confirmation than the usual destructive actions.
+  if (!confirm(`Clear ALL ${total} labels across every airport? This includes taxiway/holding-point work, not just imported routes. This cannot be undone from the UI (a server-side backup is taken automatically, but you'd need to restore it by hand).`)) return;
+  if (prompt(`Type DELETE to confirm removing all ${total} labels:`) !== 'DELETE') return;
+
+  markings.labels.forEach((l) => {
+    const marker = labelMarkers.get(l.id);
+    if (marker) map.removeLayer(marker);
+  });
+  labelMarkers.clear();
+  markings.labels = [];
+  saveMarkings();
 });
 
 // --- 90° arc tool: for planning turn radius (e.g. base-to-final) -------
