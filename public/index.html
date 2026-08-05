@@ -87,6 +87,37 @@
     font: 12px -apple-system, sans-serif; padding: 4px 10px; border-radius: 4px;
     pointer-events: none;
   }
+  #labelEditBackdrop {
+    display: none; position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,0.5);
+    align-items: center; justify-content: center;
+  }
+  #labelEditBackdrop.open { display: flex; }
+  #labelEditModal {
+    background: #2b2b2b; border: 1px solid #555; border-radius: 10px;
+    padding: 18px; width: 260px; color: #e8e8e8; font: 13px -apple-system, sans-serif;
+  }
+  #labelEditModal h3 { margin: 0 0 12px; font-size: 14px; }
+  #labelEditModal input[type=text] {
+    width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px;
+    border: 1px solid #555; background: #1c1c1c; color: #fff; font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .colour-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .colour-choice {
+    flex: 1; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center;
+    border: 2px solid transparent; font-weight: bold;
+  }
+  .colour-choice.yellow { color: #ffdd00; background: #1c1c1c; }
+  .colour-choice.blue { color: #4da6ff; background: #1c1c1c; }
+  .colour-choice.selected { border-color: #fff; }
+  #labelEditModal .btn-row { display: flex; justify-content: space-between; gap: 8px; }
+  #labelEditModal button {
+    flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #555;
+    background: #3a3a3a; color: #e8e8e8; cursor: pointer; font-size: 13px;
+  }
+  #labelEditModal button.primary { background: #2f7dd6; border-color: #2f7dd6; color: #fff; }
+  #labelEditModal button.danger { background: #a33; border-color: #a33; color: #fff; }
   #arcEditBackdrop {
     display: none; position: fixed; inset: 0; z-index: 2000;
     background: rgba(0,0,0,0.5);
@@ -142,6 +173,22 @@
 </div>
 <div id="measureTooltip"></div>
 <div id="hint">Double-click empty map to measure heading/distance &middot; double-click again to clear</div>
+
+<div id="labelEditBackdrop">
+  <div id="labelEditModal">
+    <h3>Edit label</h3>
+    <input type="text" id="labelEditText" />
+    <div class="colour-row">
+      <div class="colour-choice yellow" data-colour="yellow">Yellow</div>
+      <div class="colour-choice blue" data-colour="blue">Blue</div>
+    </div>
+    <div class="btn-row">
+      <button id="labelEditDelete" class="danger">Delete</button>
+      <button id="labelEditCancel">Cancel</button>
+      <button id="labelEditSave" class="primary">Save</button>
+    </div>
+  </div>
+</div>
 
 <div id="arcEditBackdrop">
   <div id="arcEditModal">
@@ -441,6 +488,70 @@ function renderLabel(label) {
 
   labelMarkers.set(label.id, marker);
 }
+
+// --- Label edit modal: text + colour + delete, all in one place --------
+const labelEditBackdrop = document.getElementById('labelEditBackdrop');
+const labelEditText = document.getElementById('labelEditText');
+const labelEditDelete = document.getElementById('labelEditDelete');
+const labelEditCancel = document.getElementById('labelEditCancel');
+const labelEditSave = document.getElementById('labelEditSave');
+const colourChoices = [...document.querySelectorAll('#labelEditModal .colour-choice')];
+let editingLabel = null;
+let editingMarker = null;
+let editingColour = null;
+
+function openLabelEditor(label, marker) {
+  editingLabel = label;
+  editingMarker = marker;
+  editingColour = label.color || (/\d$/.test(label.text) ? 'yellow' : 'blue');
+  labelEditText.value = label.text;
+  colourChoices.forEach((el) => el.classList.toggle('selected', el.dataset.colour === editingColour));
+  labelEditBackdrop.classList.add('open');
+  labelEditText.focus();
+  labelEditText.select();
+}
+
+function closeLabelEditor() {
+  labelEditBackdrop.classList.remove('open');
+  editingLabel = null;
+  editingMarker = null;
+}
+
+colourChoices.forEach((el) => {
+  el.addEventListener('click', () => {
+    editingColour = el.dataset.colour;
+    colourChoices.forEach((c) => c.classList.toggle('selected', c === el));
+  });
+});
+
+labelEditSave.addEventListener('click', () => {
+  if (!editingLabel) return;
+  const text = labelEditText.value.trim();
+  if (!text) return;
+  editingLabel.text = text;
+  editingLabel.color = editingColour;
+  editingMarker.setIcon(makeLabelIcon(text, editingColour));
+  saveMarkings();
+  closeLabelEditor();
+});
+
+labelEditDelete.addEventListener('click', () => {
+  if (!editingLabel) return;
+  markings.labels = markings.labels.filter((l) => l.id !== editingLabel.id);
+  saveMarkings();
+  map.removeLayer(editingMarker);
+  labelMarkers.delete(editingLabel.id);
+  closeLabelEditor();
+});
+
+labelEditCancel.addEventListener('click', closeLabelEditor);
+labelEditBackdrop.addEventListener('click', (e) => {
+  if (e.target === labelEditBackdrop) closeLabelEditor();
+});
+labelEditText.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') labelEditSave.click();
+  if (e.key === 'Escape') closeLabelEditor();
+});
 
 labelBtn.addEventListener('click', () => {
   addMode = !addMode;
