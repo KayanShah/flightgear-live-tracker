@@ -87,6 +87,32 @@
     font: 12px -apple-system, sans-serif; padding: 4px 10px; border-radius: 4px;
     pointer-events: none;
   }
+  #arcEditBackdrop {
+    display: none; position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,0.5);
+    align-items: center; justify-content: center;
+  }
+  #arcEditBackdrop.open { display: flex; }
+  #arcEditModal {
+    background: #2b2b2b; border: 1px solid #555; border-radius: 10px;
+    padding: 18px; width: 260px; color: #e8e8e8; font: 13px -apple-system, sans-serif;
+  }
+  #arcEditModal h3 { margin: 0 0 12px; font-size: 14px; }
+  #arcEditModal label { display: block; font-size: 11px; color: #999; margin-bottom: 4px; }
+  #arcEditModal input[type=number] {
+    width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px;
+    border: 1px solid #555; background: #1c1c1c; color: #fff; font-size: 14px;
+    margin-bottom: 12px;
+  }
+  #arcEditModal .colour-choice.dir { font-size: 12px; color: #e8e8e8; background: #1c1c1c; }
+  #arcEditModal label:not(:first-of-type) { margin-top: 4px; }
+  #arcEditModal .btn-row { display: flex; justify-content: space-between; gap: 8px; }
+  #arcEditModal button {
+    flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #555;
+    background: #3a3a3a; color: #e8e8e8; cursor: pointer; font-size: 13px;
+  }
+  #arcEditModal button.primary { background: #2f7dd6; border-color: #2f7dd6; color: #fff; }
+  #arcEditModal button.danger { background: #a33; border-color: #a33; color: #fff; }
 </style>
 </head>
 <body>
@@ -109,12 +135,40 @@
       <button id="labelBtn">+ Add Label</button>
       <button id="lineBtn">+ Draw Line</button>
       <button id="freehandBtn">Freehand</button>
+      <button id="arcBtn">+ Add 90&deg; Arc</button>
       <div id="colorPicker"></div>
     </div>
   </div>
 </div>
 <div id="measureTooltip"></div>
 <div id="hint">Double-click empty map to measure heading/distance &middot; double-click again to clear</div>
+
+<div id="arcEditBackdrop">
+  <div id="arcEditModal">
+    <h3>Edit 90&deg; arc</h3>
+    <label>Radius (m)</label>
+    <input type="number" id="arcEditRadius" min="10" step="10" />
+    <label>Rotation &mdash; start heading (&deg;)</label>
+    <input type="number" id="arcEditRotation" min="0" max="359" step="1" />
+    <label>Turn direction</label>
+    <div class="colour-row">
+      <div class="colour-choice dir" data-dir="cw">Right (CW)</div>
+      <div class="colour-choice dir" data-dir="ccw">Left (CCW)</div>
+    </div>
+    <label>Colour</label>
+    <div class="colour-row">
+      <div class="colour-choice yellow" data-colour="#ffdd00" style="color:#ffdd00;">Yellow</div>
+      <div class="colour-choice blue" data-colour="#4da6ff" style="color:#4da6ff;">Blue</div>
+      <div class="colour-choice" data-colour="#33cc33" style="color:#33cc33;">Green</div>
+      <div class="colour-choice" data-colour="#ff4444" style="color:#ff4444;">Red</div>
+    </div>
+    <div class="btn-row">
+      <button id="arcEditDelete" class="danger">Delete</button>
+      <button id="arcEditCancel">Cancel</button>
+      <button id="arcEditSave" class="primary">Save</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -619,6 +673,197 @@ document.addEventListener('keydown', (e) => {
       freehandPreview = null;
     }
   }
+});
+
+// --- 90° arc tool: for planning turn radius (e.g. base-to-final) -------
+// An arc is {id, lat, lon (center), radiusM, rotationDeg (start heading),
+// dir ('cw'|'ccw'), color}. Rendered as a polyline approximating the curve,
+// with a small draggable handle at the center for repositioning.
+const arcBtn = document.getElementById('arcBtn');
+const arcLayers = new Map(); // id -> { poly, handle }
+let addArcMode = false;
+
+function computeArcPoints(lat, lon, radiusM, rotationDeg, dir) {
+  const radiusNm = radiusM / 1852;
+  const sign = dir === 'ccw' ? -1 : 1;
+  const points = [];
+  const STEPS = 36;
+  for (let i = 0; i <= STEPS; i++) {
+    const bearing = rotationDeg + sign * (90 * i) / STEPS;
+    points.push(destinationPoint(lat, lon, bearing, radiusNm));
+  }
+  return points;
+}
+
+function renderArc(arc) {
+  const poly = L.polyline(computeArcPoints(arc.lat, arc.lon, arc.radiusM, arc.rotationDeg, arc.dir), {
+    color: arc.color || '#ffdd00',
+    weight: 4,
+  }).addTo(map);
+
+  const handle = L.marker([arc.lat, arc.lon], {
+    icon: L.divIcon({
+      className: 'arc-handle',
+      html: `<div style="width:12px;height:12px;border-radius:50%;background:${arc.color || '#ffdd00'};border:2px solid #fff;"></div>`,
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+    }),
+    draggable: true,
+  }).addTo(map);
+
+  handle.on('drag', () => {
+    const { lat, lng } = handle.getLatLng();
+    poly.setLatLngs(computeArcPoints(lat, lng, arc.radiusM, arc.rotationDeg, arc.dir));
+  });
+  handle.on('dragend', () => {
+    const { lat, lng } = handle.getLatLng();
+    arc.lat = lat;
+    arc.lon = lng;
+    saveMarkings();
+  });
+
+  const openEditor = (e) => {
+    if (e?.originalEvent) L.DomEvent.stopPropagation(e);
+    openArcEditor(arc);
+  };
+  poly.on('click', openEditor);
+  handle.on('click', openEditor);
+
+  arcLayers.set(arc.id, { poly, handle });
+}
+
+function removeArc(id, { save = true } = {}) {
+  const layers = arcLayers.get(id);
+  if (layers) {
+    map.removeLayer(layers.poly);
+    map.removeLayer(layers.handle);
+    arcLayers.delete(id);
+  }
+  markings.arcs = markings.arcs.filter((a) => a.id !== id);
+  if (save) saveMarkings();
+}
+
+arcBtn.addEventListener('click', () => {
+  addArcMode = !addArcMode;
+  arcBtn.classList.toggle('active', addArcMode);
+  arcBtn.textContent = addArcMode ? 'Click map to place…' : '+ Add 90° Arc';
+});
+
+map.on('click', (e) => {
+  if (!addArcMode) return;
+  addArcMode = false;
+  arcBtn.classList.remove('active');
+  arcBtn.textContent = '+ Add 90° Arc';
+
+  const arc = {
+    id: Date.now() + '-' + Math.random(),
+    lat: e.latlng.lat,
+    lon: e.latlng.lng,
+    radiusM: 800,
+    rotationDeg: 0,
+    dir: 'cw',
+    color: currentColor,
+  };
+  markings.arcs.push(arc);
+  strokeStack.push({ type: 'arc', id: arc.id });
+  saveMarkings();
+  renderArc(arc);
+  openArcEditor(arc);
+});
+
+// --- Arc edit modal ------------------------------------------------------
+const arcEditBackdrop = document.getElementById('arcEditBackdrop');
+const arcEditRadius = document.getElementById('arcEditRadius');
+const arcEditRotation = document.getElementById('arcEditRotation');
+const arcEditDelete = document.getElementById('arcEditDelete');
+const arcEditCancel = document.getElementById('arcEditCancel');
+const arcEditSave = document.getElementById('arcEditSave');
+const arcDirChoices = [...document.querySelectorAll('.colour-choice.dir')];
+const arcColourChoices = [...arcEditBackdrop.querySelectorAll('.colour-choice[data-colour]')];
+let editingArc = null;
+let editingArcDir = 'cw';
+let editingArcColor = '#ffdd00';
+
+function openArcEditor(arc) {
+  editingArc = arc;
+  editingArcDir = arc.dir;
+  editingArcColor = arc.color || '#ffdd00';
+  arcEditRadius.value = Math.round(arc.radiusM);
+  arcEditRotation.value = Math.round(arc.rotationDeg);
+  arcDirChoices.forEach((el) => el.classList.toggle('selected', el.dataset.dir === editingArcDir));
+  arcColourChoices.forEach((el) => el.classList.toggle('selected', el.dataset.colour === editingArcColor));
+  arcEditBackdrop.classList.add('open');
+}
+
+function closeArcEditor() {
+  arcEditBackdrop.classList.remove('open');
+  editingArc = null;
+}
+
+function liveUpdateArcPreview() {
+  if (!editingArc) return;
+  const layers = arcLayers.get(editingArc.id);
+  if (!layers) return;
+  layers.poly.setLatLngs(
+    computeArcPoints(editingArc.lat, editingArc.lon, Number(arcEditRadius.value) || 1, Number(arcEditRotation.value) || 0, editingArcDir)
+  );
+  layers.poly.setStyle({ color: editingArcColor });
+  layers.handle.setIcon(
+    L.divIcon({
+      className: 'arc-handle',
+      html: `<div style="width:12px;height:12px;border-radius:50%;background:${editingArcColor};border:2px solid #fff;"></div>`,
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+    })
+  );
+}
+
+arcDirChoices.forEach((el) => {
+  el.addEventListener('click', () => {
+    editingArcDir = el.dataset.dir;
+    arcDirChoices.forEach((c) => c.classList.toggle('selected', c === el));
+    liveUpdateArcPreview();
+  });
+});
+arcColourChoices.forEach((el) => {
+  el.addEventListener('click', () => {
+    editingArcColor = el.dataset.colour;
+    arcColourChoices.forEach((c) => c.classList.toggle('selected', c === el));
+    liveUpdateArcPreview();
+  });
+});
+arcEditRadius.addEventListener('input', liveUpdateArcPreview);
+arcEditRotation.addEventListener('input', liveUpdateArcPreview);
+
+arcEditSave.addEventListener('click', () => {
+  if (!editingArc) return;
+  editingArc.radiusM = Math.max(1, Number(arcEditRadius.value) || editingArc.radiusM);
+  editingArc.rotationDeg = ((Number(arcEditRotation.value) || 0) % 360 + 360) % 360;
+  editingArc.dir = editingArcDir;
+  editingArc.color = editingArcColor;
+  saveMarkings();
+  closeArcEditor();
+});
+
+arcEditDelete.addEventListener('click', () => {
+  if (!editingArc) return;
+  removeArc(editingArc.id);
+  closeArcEditor();
+});
+
+arcEditCancel.addEventListener('click', () => {
+  // Revert any live preview changes made while the modal was open.
+  if (editingArc) {
+    const layers = arcLayers.get(editingArc.id);
+    if (layers) {
+      layers.poly.setLatLngs(computeArcPoints(editingArc.lat, editingArc.lon, editingArc.radiusM, editingArc.rotationDeg, editingArc.dir));
+      layers.poly.setStyle({ color: editingArc.color || '#ffdd00' });
+    }
+  }
+  closeArcEditor();
+});
+arcEditBackdrop.addEventListener('click', (e) => {
+  if (e.target === arcEditBackdrop) arcEditCancel.click();
 });
 
 // --- Ruler tool: double-click sets an origin, mouse movement shows live
