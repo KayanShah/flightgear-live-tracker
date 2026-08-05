@@ -92,6 +92,7 @@
 <body>
 <div id="map"></div>
 <div id="hud"><span id="connDot"></span><span id="hudText">Connecting to FlightGear&hellip;</span><div id="hudFreqBlock"></div><div id="hudAtcBlock"></div></div>
+<button id="finishLineBtn">Finish Line</button>
 <div id="toolbar">
   <div class="menu" id="viewMenu">
     <button class="menu-trigger">View</button>
@@ -106,6 +107,8 @@
     <button class="menu-trigger">Markup</button>
     <div class="menu-panel">
       <button id="labelBtn">+ Add Label</button>
+      <button id="lineBtn">+ Draw Line</button>
+      <div id="colorPicker"></div>
     </div>
   </div>
 </div>
@@ -404,8 +407,147 @@ map.on('click', (e) => {
   renderLabel(label);
 });
 
+// --- Colour picker: applies to new "Draw Line" and Freehand strokes ----
+const COLORS = [
+  { name: 'yellow', hex: '#ffdd00' },
+  { name: 'cyan', hex: '#00ccff' },
+  { name: 'red', hex: '#ff4444' },
+  { name: 'green', hex: '#44ff77' },
+  { name: 'white', hex: '#ffffff' },
+];
+let currentColor = COLORS[0].hex;
+const colorPicker = document.getElementById('colorPicker');
+COLORS.forEach((c, i) => {
+  const swatch = document.createElement('div');
+  swatch.className = 'swatch' + (i === 0 ? ' selected' : '');
+  swatch.style.background = c.hex;
+  swatch.title = c.name;
+  swatch.addEventListener('click', () => {
+    currentColor = c.hex;
+    [...colorPicker.children].forEach((el) => el.classList.remove('selected'));
+    swatch.classList.add('selected');
+  });
+  colorPicker.appendChild(swatch);
+});
+
+// Tracks lines added via Draw Line / Freehand this session, for Undo.
+// (Pre-existing markings loaded from disk are never auto-undoable.)
+let strokeStack = [];
+
+// --- Line drawing (taxiway centerlines, routes, etc.) ------------------
+const lineBtn = document.getElementById('lineBtn');
+const finishLineBtn = document.getElementById('finishLineBtn');
+let drawMode = false;
+let drawPoints = [];
+let drawPreview = null;
+let lineLayers = new Map(); // id -> L.Polyline
+
+function renderLine(line) {
+  const poly = L.polyline(line.points, {
+    color: line.color || '#ffdd00',
+    weight: line.taxiRoute ? 4 : 3,
+    dashArray: line.freehand || line.taxiRoute ? null : '6 6',
+  }).addTo(map);
+
+  if (line.text) {
+    poly.bindTooltip(line.text, { permanent: true, direction: 'center', className: 'taxi-label' });
+  }
+
+  // Click to rename, shift+click to delete.
+  poly.on('click', (e) => {
+    L.DomEvent.stopPropagation(e);
+    if (e.originalEvent.shiftKey) {
+      markings.lines = markings.lines.filter((l) => l.id !== line.id);
+      saveMarkings();
+      map.removeLayer(poly);
+      lineLayers.delete(line.id);
+      return;
+    }
+    const next = prompt('Line label (optional):', line.text || '');
+    if (next === null) return;
+    line.text = next;
+    poly.unbindTooltip();
+    if (next) poly.bindTooltip(next, { permanent: true, direction: 'center', className: 'taxi-label' });
+    saveMarkings();
+  });
+
+  lineLayers.set(line.id, poly);
+}
+
+function cancelDraw() {
+  drawMode = false;
+  drawPoints = [];
+  lineBtn.classList.remove('active');
+  lineBtn.textContent = '+ Draw Line';
+  finishLineBtn.style.display = 'none';
+  if (drawPreview) {
+    map.removeLayer(drawPreview);
+    drawPreview = null;
+  }
+  measureTooltip.style.display = 'none';
+}
+
+function finishLine() {
+  if (drawPoints.length < 2) {
+    cancelDraw();
+    return;
+  }
+  const text = prompt('Line label (optional, e.g. "Holding Point A1"):') || '';
+  const line = { id: Date.now() + '-' + Math.random(), points: drawPoints, text, color: currentColor };
+  markings.lines.push(line);
+  strokeStack.push({ type: 'line', id: line.id });
+  saveMarkings();
+  renderLine(line);
+  cancelDraw();
+}
+
+lineBtn.addEventListener('click', () => {
+  if (drawMode) {
+    cancelDraw();
+    return;
+  }
+  drawMode = true;
+  drawPoints = [];
+  lineBtn.classList.add('active');
+  lineBtn.textContent = 'Click to add points (Esc to cancel)';
+  finishLineBtn.style.display = 'inline-block';
+});
+
+finishLineBtn.addEventListener('click', finishLine);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && drawMode) cancelDraw();
+});
+
+map.on('click', (e) => {
+  if (!drawMode) return;
+  drawPoints.push([e.latlng.lat, e.latlng.lng]);
+  if (drawPreview) map.removeLayer(drawPreview);
+  drawPreview = L.polyline(drawPoints, { color: currentColor, weight: 3, dashArray: '6 6' }).addTo(map);
+});
+
+// Live heading/distance readout for the segment currently being drawn —
+// e.g. click a runway threshold, then watch the heading as you aim for
+// the extended centerline, instead of eyeballing it.
+map.on('mousemove', (e) => {
+  if (!drawMode || drawPoints.length === 0) {
+    return;
+  }
+  const last = drawPoints[drawPoints.length - 1];
+  const lastLatLng = { lat: last[0], lng: last[1] };
+  const brg = initialBearingDeg(lastLatLng, e.latlng);
+  const dist = greatCircleDistanceNm(lastLatLng, e.latlng);
+
+  const point = map.latLngToContainerPoint(e.latlng);
+  const mapRect = map.getContainer().getBoundingClientRect();
+  measureTooltip.style.left = `${mapRect.left + point.x}px`;
+  measureTooltip.style.top = `${mapRect.top + point.y}px`;
+  measureTooltip.textContent = `${Math.round(brg).toString().padStart(3, '0')}°  ·  ${dist.toFixed(2)} NM`;
+  measureTooltip.style.display = 'block';
+});
+
 map.on('dblclick', (e) => {
-  if (addMode) return; // those tools own this click
+  if (addMode || drawMode) return; // those tools own this click
 
   toggleMeasure(e.latlng);
 });
