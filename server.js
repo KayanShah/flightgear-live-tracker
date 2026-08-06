@@ -61,7 +61,9 @@ function readMarkings() {
 }
 
 function writeMarkingsAtomic(data) {
-  fs.writeFileSync(MARKINGS_FILE, JSON.stringify(data, null, 2));
+  const tmpFile = `${MARKINGS_FILE}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2));
+  fs.renameSync(tmpFile, MARKINGS_FILE); // atomic on the same filesystem
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
