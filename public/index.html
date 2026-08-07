@@ -167,6 +167,25 @@
   #airportResults .result .code { color: #4da6ff; font-weight: bold; margin-right: 6px; }
   #airportResults .result .place { color: #999; font-size: 12px; }
   #airportResults .empty { padding: 8px 12px; color: #999; font-size: 13px; }
+  #airportPinSearch { padding: 4px 2px; }
+  #airportPinInput {
+    width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid #555; background: #1c1c1c; color: #fff;
+    font: 13px -apple-system, sans-serif;
+  }
+  #airportPinInput::placeholder { color: #999; }
+  #airportPinResults {
+    display: none; margin-top: 4px; background: #1c1c1c; border: 1px solid #555;
+    border-radius: 6px; max-height: 220px; overflow-y: auto;
+  }
+  #airportPinResults.open { display: block; }
+  #airportPinResults .result {
+    padding: 7px 10px; cursor: pointer; font: 12px -apple-system, sans-serif; color: #e8e8e8;
+  }
+  #airportPinResults .result:hover, #airportPinResults .result.highlighted { background: #3a3a3a; }
+  #airportPinResults .result .code { color: #4da6ff; font-weight: bold; margin-right: 6px; }
+  #airportPinResults .result .place { color: #999; font-size: 11px; }
+  #airportPinResults .empty { padding: 7px 10px; color: #999; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -198,6 +217,11 @@
       <button id="undoBtn">Undo Last Stroke</button>
       <button id="clearAllBtn" class="danger">Clear All Drawings</button>
       <button id="clearAllLabelsBtn" class="danger">Clear All Labels</button>
+      <hr />
+      <div id="airportPinSearch">
+        <input type="text" id="airportPinInput" placeholder="+ Add airport pin&hellip;" autocomplete="off" />
+        <div id="airportPinResults"></div>
+      </div>
       <div id="colorPicker"></div>
     </div>
   </div>
@@ -360,6 +384,68 @@ airportSearchInput.addEventListener('keydown', (e) => {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('#airportSearch')) airportResults.classList.remove('open');
+});
+
+// --- Add Airport Pin: type a name, pick from the dropdown, drop a pin --
+// Reuses the same /api/airports search as the top nav box, but creates a
+// persistent draggable/editable label (like any other marking) instead of
+// just flying the map there.
+const airportPinInput = document.getElementById('airportPinInput');
+const airportPinResults = document.getElementById('airportPinResults');
+let pinSearchDebounce = null;
+let pinSearchResults = [];
+
+function renderPinResults() {
+  if (pinSearchResults.length === 0) {
+    airportPinResults.innerHTML = '<div class="empty">No matches</div>';
+    airportPinResults.classList.add('open');
+    return;
+  }
+  airportPinResults.innerHTML = pinSearchResults
+    .map((a, i) => {
+      const code = a.icao || a.ident;
+      const place = [a.municipality, a.name].filter(Boolean).join(' — ');
+      return `<div class="result" data-i="${i}"><span class="code">${code}</span><span class="place">${place}</span></div>`;
+    })
+    .join('');
+  airportPinResults.classList.add('open');
+}
+
+airportPinInput.addEventListener('input', () => {
+  const q = airportPinInput.value.trim();
+  clearTimeout(pinSearchDebounce);
+  if (q.length < 2) {
+    airportPinResults.classList.remove('open');
+    pinSearchResults = [];
+    return;
+  }
+  pinSearchDebounce = setTimeout(async () => {
+    const res = await fetch(`/api/airports?q=${encodeURIComponent(q)}`);
+    pinSearchResults = await res.json();
+    renderPinResults();
+  }, 250);
+});
+
+airportPinResults.addEventListener('click', (e) => {
+  const el = e.target.closest('.result');
+  if (!el) return;
+  const a = pinSearchResults[parseInt(el.dataset.i, 10)];
+  if (!a) return;
+
+  const label = { id: Date.now() + '-' + Math.random(), lat: a.lat, lon: a.lon, text: a.icao || a.ident, color: 'blue' };
+  markings.labels.push(label);
+  saveMarkings();
+  renderLabel(label);
+  openLabelEditor(label, labelMarkers.get(label.id));
+
+  airportPinInput.value = '';
+  airportPinResults.classList.remove('open');
+  pinSearchResults = [];
+  document.getElementById('markupMenu').classList.remove('open');
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#airportPinSearch')) airportPinResults.classList.remove('open');
 });
 
 // Arrow points due north (0deg) by default, so rotating it by the exact
