@@ -144,11 +144,38 @@
   }
   #arcEditModal button.primary { background: #2f7dd6; border-color: #2f7dd6; color: #fff; }
   #arcEditModal button.danger { background: #a33; border-color: #a33; color: #fff; }
+  #airportSearch {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; width: 280px;
+  }
+  #airportSearchInput {
+    width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 6px;
+    border: 1px solid #555; background: rgba(20,20,20,0.85); color: #fff;
+    font: 13px -apple-system, sans-serif;
+  }
+  #airportSearchInput::placeholder { color: #999; }
+  #airportResults {
+    display: none; margin-top: 4px; background: #2b2b2b; border: 1px solid #555;
+    border-radius: 6px; max-height: 260px; overflow-y: auto;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #airportResults.open { display: block; }
+  #airportResults .result {
+    padding: 8px 12px; cursor: pointer; font: 13px -apple-system, sans-serif; color: #e8e8e8;
+  }
+  #airportResults .result:hover, #airportResults .result.highlighted { background: #3a3a3a; }
+  #airportResults .result .code { color: #4da6ff; font-weight: bold; margin-right: 6px; }
+  #airportResults .result .place { color: #999; font-size: 12px; }
+  #airportResults .empty { padding: 8px 12px; color: #999; font-size: 13px; }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="hud"><span id="connDot"></span><span id="hudText">Connecting to FlightGear&hellip;</span><div id="hudFreqBlock"></div><div id="hudAtcBlock"></div></div>
+<div id="airportSearch">
+  <input type="text" id="airportSearchInput" placeholder="Search UK aerodrome (name or ICAO)…" autocomplete="off" />
+  <div id="airportResults"></div>
+</div>
 <button id="finishLineBtn">Finish Line</button>
 <div id="toolbar">
   <div class="menu" id="viewMenu">
@@ -256,6 +283,84 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors',
   maxZoom: 19,
 }).addTo(map);
+
+// --- UK aerodrome search: type a name/ICAO/IATA, fly to it -------------
+const airportSearchInput = document.getElementById('airportSearchInput');
+const airportResults = document.getElementById('airportResults');
+let searchDebounce = null;
+let searchResults = [];
+let searchHighlight = -1;
+
+function renderSearchResults() {
+  if (searchResults.length === 0) {
+    airportResults.innerHTML = '<div class="empty">No matches</div>';
+    airportResults.classList.add('open');
+    return;
+  }
+  airportResults.innerHTML = searchResults
+    .map((a, i) => {
+      const code = a.icao || a.ident;
+      const place = [a.municipality, a.name].filter(Boolean).join(' — ');
+      return `<div class="result${i === searchHighlight ? ' highlighted' : ''}" data-i="${i}">
+        <span class="code">${code}</span><span class="place">${place}</span>
+      </div>`;
+    })
+    .join('');
+  airportResults.classList.add('open');
+}
+
+function goToAirport(a) {
+  map.setView([a.lat, a.lon], 14, { animate: true });
+  autofollow = false;
+  followBtn.classList.remove('toggle-on');
+  airportResults.classList.remove('open');
+  airportSearchInput.value = `${a.icao || a.ident} — ${a.name}`;
+}
+
+airportSearchInput.addEventListener('input', () => {
+  const q = airportSearchInput.value.trim();
+  clearTimeout(searchDebounce);
+  if (q.length < 2) {
+    airportResults.classList.remove('open');
+    searchResults = [];
+    return;
+  }
+  searchDebounce = setTimeout(async () => {
+    const res = await fetch(`/api/airports?q=${encodeURIComponent(q)}`);
+    searchResults = await res.json();
+    searchHighlight = -1;
+    renderSearchResults();
+  }, 250);
+});
+
+airportResults.addEventListener('click', (e) => {
+  const el = e.target.closest('.result');
+  if (!el) return;
+  goToAirport(searchResults[parseInt(el.dataset.i, 10)]);
+});
+
+airportSearchInput.addEventListener('keydown', (e) => {
+  if (!airportResults.classList.contains('open') || searchResults.length === 0) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    searchHighlight = Math.min(searchHighlight + 1, searchResults.length - 1);
+    renderSearchResults();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    searchHighlight = Math.max(searchHighlight - 1, 0);
+    renderSearchResults();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (searchHighlight >= 0) goToAirport(searchResults[searchHighlight]);
+    else if (searchResults.length === 1) goToAirport(searchResults[0]);
+  } else if (e.key === 'Escape') {
+    airportResults.classList.remove('open');
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#airportSearch')) airportResults.classList.remove('open');
+});
 
 // Arrow points due north (0deg) by default, so rotating it by the exact
 // heading value lines it up correctly — unlike the plane emoji, which

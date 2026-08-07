@@ -20,6 +20,92 @@ const FG_ROOT = process.env.FG_ROOT || '/Applications/fgdata_2024_1';
 const FIX_DAT_PATH = path.join(FG_ROOT, 'Navaids', 'fix.dat.gz');
 const TAXIWAY_GRAPHS_DIR = path.join(__dirname, 'taxiway-graphs');
 
+const AIRPORTS_CSV_PATH = path.join(__dirname, 'airports.csv');
+
+// Minimal RFC4180 CSV line splitter — handles quoted fields containing
+// commas (airport names sometimes have them) without pulling in a dependency.
+function parseCsvLine(line) {
+  const fields = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        cur += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      fields.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+// Non-UK airfields explicitly added to the search despite the GB filter.
+const EXTRA_AIRPORT_IDENTS = new Set(['LFMF', 'VNLK']);
+
+// UK aerodrome search data, from the public-domain OurAirports dataset
+// (ourairports.com/data/airports.csv), filtered down to GB entries plus
+// any explicit exceptions above.
+function loadAirports() {
+  try {
+    const text = fs.readFileSync(AIRPORTS_CSV_PATH, 'utf8');
+    const lines = text.split('\n').filter(Boolean);
+    const header = parseCsvLine(lines[0]);
+    const col = (name) => header.indexOf(name);
+    const idxs = {
+      ident: col('ident'),
+      type: col('type'),
+      name: col('name'),
+      lat: col('latitude_deg'),
+      lon: col('longitude_deg'),
+      country: col('iso_country'),
+      municipality: col('municipality'),
+      icao: col('icao_code'),
+      iata: col('iata_code'),
+      elevation: col('elevation_ft'),
+    };
+    const airports = [];
+    for (let i = 1; i < lines.length; i++) {
+      const f = parseCsvLine(lines[i]);
+      if (f[idxs.country] !== 'GB' && !EXTRA_AIRPORT_IDENTS.has(f[idxs.ident])) continue;
+      if (f[idxs.type] === 'closed') continue;
+      const lat = parseFloat(f[idxs.lat]);
+      const lon = parseFloat(f[idxs.lon]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      airports.push({
+        ident: f[idxs.ident] || '',
+        icao: f[idxs.icao] || '',
+        iata: f[idxs.iata] || '',
+        name: f[idxs.name] || '',
+        municipality: f[idxs.municipality] || '',
+        type: f[idxs.type] || '',
+        lat,
+        lon,
+        elevationFt: parseFloat(f[idxs.elevation]) || 0,
+      });
+    }
+    console.log(`Loaded ${airports.length} UK aerodromes from ${AIRPORTS_CSV_PATH}`);
+    return airports;
+  } catch (err) {
+    console.warn(`Could not load airports from ${AIRPORTS_CSV_PATH}: ${err.message}`);
+    return [];
+  }
+}
+
+const AIRPORTS = loadAirports();
+
 const PROPS = {
   lat: 'position/latitude-deg',
   lon: 'position/longitude-deg',
@@ -107,6 +193,25 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  if (req.url.startsWith('/api/airports') && req.method === 'GET') {
+    const q = new URL(req.url, `http://${req.headers.host}`).searchParams.get('q') || '';
+    const needle = q.trim().toUpperCase();
+    let results = [];
+    if (needle.length >= 2) {
+      results = AIRPORTS.filter(
+        (a) =>
+          a.ident.toUpperCase().includes(needle) ||
+          a.icao.toUpperCase().includes(needle) ||
+          a.iata.toUpperCase().includes(needle) ||
+          a.name.toUpperCase().includes(needle) ||
+          a.municipality.toUpperCase().includes(needle)
+      ).slice(0, 25);
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(results));
     return;
   }
 
