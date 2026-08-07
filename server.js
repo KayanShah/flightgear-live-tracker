@@ -53,18 +53,38 @@ const MIME = {
 function readMarkings() {
   try {
     const data = JSON.parse(fs.readFileSync(MARKINGS_FILE, 'utf8'));
-    if (!Array.isArray(data.arcs)) data.arcs = [];
+    if (!Array.isArray(data.arcs)) data.arcs = []; // older files predate arcs
     return data;
   } catch {
     return { labels: [], lines: [], arcs: [] };
   }
 }
 
+// Snapshot the current on-disk file before every overwrite, so hours of
+// manual label placement can never be lost to a bad save, a client bug,
+// or an accidental Clear All — only deleting these files by hand can.
+function backupMarkings() {
+  if (!fs.existsSync(MARKINGS_FILE)) return;
+  fs.mkdirSync(MARKINGS_BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.copyFileSync(MARKINGS_FILE, path.join(MARKINGS_BACKUP_DIR, `markings-${stamp}.json`));
+
+  const files = fs.readdirSync(MARKINGS_BACKUP_DIR).filter((f) => f.endsWith('.json')).sort();
+  const excess = files.length - MAX_BACKUPS;
+  if (excess > 0) {
+    for (const f of files.slice(0, excess)) {
+      fs.unlinkSync(path.join(MARKINGS_BACKUP_DIR, f));
+    }
+  }
+}
+
 function writeMarkingsAtomic(data) {
+  backupMarkings();
   const tmpFile = `${MARKINGS_FILE}.tmp`;
   fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2));
   fs.renameSync(tmpFile, MARKINGS_FILE); // atomic on the same filesystem
 }
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
