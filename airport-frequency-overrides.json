@@ -1,0 +1,6 @@
+{
+  "EGPH": [
+    { "type": "TWR", "description": "TWR", "mhz": 118.705 },
+    { "type": "ATIS", "description": "ATIS", "mhz": 131.355 }
+  ]
+}

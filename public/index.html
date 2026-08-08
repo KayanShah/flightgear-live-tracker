@@ -558,6 +558,36 @@ function addTrailPoint(lat, lon, ts) {
   }
 }
 
+// --- Departure/nearest airport frequencies, refreshed occasionally -----
+const hudFreqBlock = document.getElementById('hudFreqBlock');
+let lastFreqFetch = 0;
+let lastFreqAirportIdent = null;
+const FREQ_REFRESH_MS = 20000;
+
+async function refreshAirportFrequencies(lat, lon) {
+  const now = Date.now();
+  if (now - lastFreqFetch < FREQ_REFRESH_MS) return;
+  lastFreqFetch = now;
+  try {
+    const res = await fetch(`/api/nearest-airport-frequencies?lat=${lat}&lon=${lon}`);
+    const data = await res.json();
+    if (!data.airport) {
+      hudFreqBlock.innerHTML = '';
+      lastFreqAirportIdent = null;
+      return;
+    }
+    lastFreqAirportIdent = data.airport.ident;
+    const freqList = data.frequencies
+      .map((f) => `${f.type || f.description || '?'} ${f.mhz.toFixed(3)}`)
+      .join(' &middot; ');
+    hudFreqBlock.innerHTML =
+      `<span class="freq-airport">${data.airport.icao || data.airport.ident}</span>` +
+      (freqList ? ` &nbsp; ${freqList}` : ' &nbsp; (no published frequencies)');
+  } catch {
+    // leave whatever was last shown
+  }
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/position');

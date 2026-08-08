@@ -106,6 +106,78 @@ function loadAirports() {
 
 const AIRPORTS = loadAirports();
 
+const AIRPORT_FREQUENCIES_CSV_PATH = path.join(__dirname, 'airport-frequencies.csv');
+
+// Frequencies keyed by airport_ident, from the companion OurAirports
+// dataset (ourairports.com/data/airport-frequencies.csv) — only kept for
+// airports we actually have in AIRPORTS, so this stays small in memory.
+function loadAirportFrequencies() {
+  try {
+    const text = fs.readFileSync(AIRPORT_FREQUENCIES_CSV_PATH, 'utf8');
+    const lines = text.split('\n').filter(Boolean);
+    const header = parseCsvLine(lines[0]);
+    const col = (name) => header.indexOf(name);
+    const idxs = { ident: col('airport_ident'), type: col('type'), desc: col('description'), mhz: col('frequency_mhz') };
+    const knownIdents = new Set(AIRPORTS.map((a) => a.ident));
+    const byIdent = new Map();
+    for (let i = 1; i < lines.length; i++) {
+      const f = parseCsvLine(lines[i]);
+      const ident = f[idxs.ident];
+      if (!knownIdents.has(ident)) continue;
+      const mhz = parseFloat(f[idxs.mhz]);
+      if (!Number.isFinite(mhz)) continue;
+      if (!byIdent.has(ident)) byIdent.set(ident, []);
+      byIdent.get(ident).push({ type: f[idxs.type] || '', description: f[idxs.desc] || '', mhz });
+    }
+    applyFrequencyOverrides(byIdent);
+    console.log(`Loaded frequencies for ${byIdent.size} airports from ${AIRPORT_FREQUENCIES_CSV_PATH}`);
+    return byIdent;
+  } catch (err) {
+    console.warn(`Could not load airport frequencies: ${err.message}`);
+    return new Map();
+  }
+}
+
+// The free OurAirports dataset is community-maintained and sometimes wrong
+// — e.g. rounding an 8.33kHz-spaced real-world frequency (118.705) down to
+// the older 25kHz value (118.700). This file lets specific entries be
+// corrected by hand without trying to fix the whole dataset.
+const AIRPORT_FREQUENCY_OVERRIDES_PATH = path.join(__dirname, 'airport-frequency-overrides.json');
+
+function applyFrequencyOverrides(byIdent) {
+  let overrides;
+  try {
+    overrides = JSON.parse(fs.readFileSync(AIRPORT_FREQUENCY_OVERRIDES_PATH, 'utf8'));
+  } catch {
+    return;
+  }
+  for (const [ident, entries] of Object.entries(overrides)) {
+    const existing = byIdent.get(ident) || [];
+    for (const override of entries) {
+      const i = existing.findIndex((e) => e.type === override.type);
+      if (i >= 0) existing[i] = override;
+      else existing.push(override);
+    }
+    byIdent.set(ident, existing);
+  }
+}
+
+const AIRPORT_FREQUENCIES = loadAirportFrequencies();
+
+function findNearestAirport(lat, lon, maxNm = 8) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const a of AIRPORTS) {
+    const d = haversineNm(lat, lon, a.lat, a.lon);
+    if (d < bestDist) {
+      bestDist = d;
+      best = a;
+    }
+  }
+  if (!best || bestDist > maxNm) return null;
+  return best;
+}
+
 const PROPS = {
   lat: 'position/latitude-deg',
   lon: 'position/longitude-deg',
@@ -212,6 +284,24 @@ const server = http.createServer(async (req, res) => {
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(results));
+    return;
+  }
+
+  if (req.url.startsWith('/api/nearest-airport-frequencies') && req.method === 'GET') {
+    const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
+    const lat = Number(params.get('lat'));
+    const lon = Number(params.get('lon'));
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Expected ?lat=&lon=' }));
+      return;
+    }
+    const airport = findNearestAirport(lat, lon);
+    const result = airport
+      ? { airport, frequencies: AIRPORT_FREQUENCIES.get(airport.ident) || [] }
+      : { airport: null, frequencies: [] };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
     return;
   }
 
