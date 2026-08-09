@@ -52,6 +52,7 @@ function loadTaxiwayGraph(icao) {
 const GRAPH_AIRPORTS = [
   { icao: 'EGCC', lat: 53.3537, lon: -2.275 },
   { icao: 'EGTR', lat: 51.6553, lon: -0.3305 },
+  { icao: 'EGWU', lat: 51.553, lon: -0.418 },
 ];
 
 function nearestAirportGraph(lat, lon) {
