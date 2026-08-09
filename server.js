@@ -20,6 +20,125 @@ const FG_ROOT = process.env.FG_ROOT || '/Applications/fgdata_2024_1';
 const FIX_DAT_PATH = path.join(FG_ROOT, 'Navaids', 'fix.dat.gz');
 const TAXIWAY_GRAPHS_DIR = path.join(__dirname, 'taxiway-graphs');
 
+// --- Taxiway centerline graphs (real OSM pavement geometry) for routing.
+// Loaded once per airport code from taxiway-graphs/<ICAO>.json, each built
+// from OSM way node membership so shared nodes at intersections connect
+// the graph properly, instead of just interpolating between labels.
+const TAXIWAY_GRAPHS = new Map(); // icao -> { nodes: Map(id -> [lat,lon]), adj: Map(id -> [{to,dist}]) }
+
+function loadTaxiwayGraph(icao) {
+  if (TAXIWAY_GRAPHS.has(icao)) return TAXIWAY_GRAPHS.get(icao);
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(TAXIWAY_GRAPHS_DIR, `${icao}.json`), 'utf8'));
+    const nodes = new Map(Object.entries(raw.nodes));
+    const adj = new Map();
+    for (const [a, b, dist] of raw.edges) {
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a).push({ to: b, dist });
+      adj.get(b).push({ to: a, dist });
+    }
+    const graph = { nodes, adj };
+    TAXIWAY_GRAPHS.set(icao, graph);
+    return graph;
+  } catch {
+    TAXIWAY_GRAPHS.set(icao, null);
+    return null;
+  }
+}
+
+// Which cached airport graph is closest to this position, so a route near
+// EGWU doesn't accidentally try to route through EGCC's graph, etc.
+const GRAPH_AIRPORTS = [
+  { icao: 'EGCC', lat: 53.3537, lon: -2.275 },
+];
+
+function nearestAirportGraph(lat, lon) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const a of GRAPH_AIRPORTS) {
+    const d = haversineNm(lat, lon, a.lat, a.lon);
+    if (d < bestDist) {
+      bestDist = d;
+      best = a.icao;
+    }
+  }
+  if (bestDist > 5) return null; // too far from any known airport's graph
+  return loadTaxiwayGraph(best);
+}
+
+function nearestGraphNode(graph, lat, lon) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const [id, [nlat, nlon]] of graph.nodes) {
+    const d = (nlat - lat) ** 2 + (nlon - lon) ** 2; // planar approx is fine at this scale
+    if (d < bestDist) {
+      bestDist = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+// Plain O(V^2) Dijkstra — graphs here are only ~100-1600 nodes, no need
+// for a binary heap.
+function dijkstra(graph, startId, endId) {
+  const dist = new Map([[startId, 0]]);
+  const prev = new Map();
+  const visited = new Set();
+  for (;;) {
+    let u = null;
+    let uDist = Infinity;
+    for (const [id, d] of dist) {
+      if (!visited.has(id) && d < uDist) {
+        uDist = d;
+        u = id;
+      }
+    }
+    if (u === null) break;
+    if (u === endId) break;
+    visited.add(u);
+    for (const { to, dist: edgeDist } of graph.adj.get(u) || []) {
+      const alt = uDist + edgeDist;
+      if (alt < (dist.get(to) ?? Infinity)) {
+        dist.set(to, alt);
+        prev.set(to, u);
+      }
+    }
+  }
+  if (!dist.has(endId)) return null;
+  const path = [endId];
+  let cur = endId;
+  while (cur !== startId) {
+    cur = prev.get(cur);
+    if (cur === undefined) return null;
+    path.push(cur);
+  }
+  path.reverse();
+  return path.map((id) => graph.nodes.get(id));
+}
+
+// Route a sequence of [lat,lon] waypoints along real taxiway pavement,
+// falling back to a straight hop between any pair that can't be routed
+// (no graph for that airport, or the graph is disconnected there).
+function routeAlongTaxiways(waypoints, lat, lon) {
+  const graph = nearestAirportGraph(lat, lon);
+  if (!graph || waypoints.length < 2) return waypoints;
+
+  const routed = [waypoints[0]];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const fromNode = nearestGraphNode(graph, waypoints[i][0], waypoints[i][1]);
+    const toNode = nearestGraphNode(graph, waypoints[i + 1][0], waypoints[i + 1][1]);
+    const path = fromNode && toNode ? dijkstra(graph, fromNode, toNode) : null;
+    if (path && path.length > 0) {
+      routed.push(...path, waypoints[i + 1]);
+    } else {
+      routed.push(waypoints[i + 1]);
+    }
+  }
+  return routed;
+}
+
 const AIRPORTS_CSV_PATH = path.join(__dirname, 'airports.csv');
 
 // Minimal RFC4180 CSV line splitter — handles quoted fields containing
