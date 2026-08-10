@@ -55,6 +55,7 @@ const GRAPH_AIRPORTS = [
   { icao: 'EGWU', lat: 51.553, lon: -0.418 },
   { icao: 'EGBO', lat: 52.5163, lon: -2.2617 },
   { icao: 'EGNX', lat: 52.8289, lon: -1.3326 },
+  { icao: 'EGPH', lat: 55.9494, lon: -3.3615 },
 ];
 
 function nearestAirportGraph(lat, lon) {
