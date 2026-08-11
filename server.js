@@ -60,6 +60,7 @@ const GRAPH_AIRPORTS = [
   { icao: 'EGLL', lat: 51.4701, lon: -0.4582 },
   { icao: 'EGSS', lat: 51.8882, lon: 0.2456 },
   { icao: 'VABB', lat: 19.0911, lon: 72.8675 },
+  { icao: 'KDFW', lat: 32.8967, lon: -97.0348 },
 ];
 
 function nearestAirportGraph(lat, lon) {
@@ -181,7 +182,7 @@ function parseCsvLine(line) {
 }
 
 // Non-UK airfields explicitly added to the search despite the GB filter.
-const EXTRA_AIRPORT_IDENTS = new Set(['LFMF', 'VNLK']);
+const EXTRA_AIRPORT_IDENTS = new Set(['LFMF', 'VNLK', 'KDFW']);
 
 // UK aerodrome search data, from the public-domain OurAirports dataset
 // (ourairports.com/data/airports.csv), filtered down to GB entries plus
