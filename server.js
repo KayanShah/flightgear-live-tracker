@@ -62,6 +62,7 @@ const GRAPH_AIRPORTS = [
   { icao: 'VABB', lat: 19.0911, lon: 72.8675 },
   { icao: 'KDFW', lat: 32.8967, lon: -97.0348 },
   { icao: 'KLAX', lat: 33.9401, lon: -118.4082 },
+  { icao: 'EGKK', lat: 51.1527, lon: -0.1803 },
 ];
 
 function nearestAirportGraph(lat, lon) {
