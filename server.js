@@ -375,6 +375,67 @@ function writeMarkingsAtomic(data) {
   fs.renameSync(tmpFile, MARKINGS_FILE); // atomic on the same filesystem
 }
 
+// --- SimBrief-style OFP navlog parser -----------------------------------
+// Deterministic regex extraction, not LLM-based: this is exact structured
+// coordinate data (DDMM.m / DDDMM.m format), and an LLM re-typing digits
+// risks silently transposing a number — a real safety concern for a route
+// someone's actually flying. A parser either matches the format or it
+// doesn't; it can't "almost" get a coordinate right.
+//
+// Format (one block per waypoint, appears twice per fix in the navlog):
+//   NAME_OR_IDENT   N/SDDMM.m  ...(other columns)...
+//   IDENT2          E/WDDDMM.m ...(other columns)...
+// IDENT2 is usually the same as the first ident, but sometimes a shorter
+// code (e.g. "ISED044002" / "D044B"), and is blank for "T O C"/"T O D"
+// entries. FIR boundary crossings are prefixed with "-" and are skipped —
+// they're not real route waypoints.
+function parseNavlog(text) {
+  const latRe = /\b([NS])(\d{2})(\d{2}(?:\.\d+)?)\b/;
+  const lonRe = /\b([EW])(\d{3})(\d{2}(?:\.\d+)?)\b/;
+
+  const latMatches = [];
+  const lonMatches = [];
+
+  for (const line of text.split('\n')) {
+    const latM = latRe.exec(line);
+    if (latM) {
+      const name = line.slice(0, latM.index).replace(/\s+/g, ' ').trim();
+      let lat = parseInt(latM[2], 10) + parseFloat(latM[3]) / 60;
+      if (latM[1] === 'S') lat = -lat;
+      latMatches.push({ name, lat });
+      continue; // a line has either a lat or a lon token, never both
+    }
+    const lonM = lonRe.exec(line);
+    if (lonM) {
+      const name = line.slice(0, lonM.index).replace(/\s+/g, ' ').trim();
+      let lon = parseInt(lonM[2], 10) + parseFloat(lonM[3]) / 60;
+      if (lonM[1] === 'W') lon = -lon;
+      lonMatches.push({ name, lon });
+    }
+  }
+
+  const count = Math.min(latMatches.length, lonMatches.length);
+  const waypoints = [];
+  const seen = new Map();
+  for (let i = 0; i < count; i++) {
+    const latEntry = latMatches[i];
+    const lonEntry = lonMatches[i];
+    const rawName = (lonEntry.name || latEntry.name).replace(/\s+/g, '');
+    if (!rawName || rawName.startsWith('-')) continue; // FIR boundary crossing
+
+    const n = (seen.get(rawName) || 0) + 1;
+    seen.set(rawName, n);
+    const id = n > 1 ? `${rawName}(${n})` : rawName;
+
+    waypoints.push({
+      id,
+      lat: Math.round(latEntry.lat * 1e6) / 1e6,
+      lon: Math.round(lonEntry.lon * 1e6) / 1e6,
+    });
+  }
+  return { waypoints, latCount: latMatches.length, lonCount: lonMatches.length };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -434,6 +495,21 @@ const server = http.createServer(async (req, res) => {
       : { airport: null, frequencies: [] };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+    return;
+  }
+
+  if (req.url === '/api/parse-navlog' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { text } = JSON.parse(body);
+      if (typeof text !== 'string' || !text.trim()) throw new Error('Expected { text }');
+      const result = parseNavlog(text);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 

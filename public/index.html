@@ -73,6 +73,21 @@
     border: 2px solid transparent;
   }
   #colorPicker .swatch.selected { border-color: #fff; }
+  #navlogPanel { min-width: 300px; }
+  #navlogText {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    background: #1c1c1c; color: #fff; border: 1px solid #555; border-radius: 6px;
+    padding: 8px; font: 11px/1.4 ui-monospace, monospace; margin-bottom: 6px;
+  }
+  #navlogCallsign {
+    width: 100%; box-sizing: border-box; padding: 7px 8px; border-radius: 6px;
+    border: 1px solid #555; background: #1c1c1c; color: #fff;
+    font: 12px -apple-system, sans-serif; margin-bottom: 6px;
+  }
+  #navlogDrawBtn.primary-action { background: #2f7dd6 !important; border-color: #2f7dd6; color: #fff; text-align: center; }
+  #navlogStatus { font-size: 12px; color: #ccc; padding: 4px 2px 0; white-space: pre-wrap; }
+  #navlogStatus.error { color: #ff6b6b; }
+  #navlogStatus.ok { color: #6bdc8a; }
   #measureTooltip {
     position: absolute; z-index: 1000; display: none;
     background: rgba(20,20,20,0.85); color: #fff;
@@ -223,6 +238,16 @@
         <div id="airportPinResults"></div>
       </div>
       <div id="colorPicker"></div>
+    </div>
+  </div>
+  <div class="menu" id="navlogMenu">
+    <button class="menu-trigger">Route</button>
+    <div class="menu-panel" id="navlogPanel">
+      <textarea id="navlogText" rows="6" placeholder="Paste a SimBrief-style OFP navlog here&hellip;"></textarea>
+      <input type="text" id="navlogCallsign" placeholder="Callsign (blank = use live sim callsign)" />
+      <button id="navlogDrawBtn" class="primary-action">Draw Route + UNICOM Calls</button>
+      <button id="navlogClearBtn" class="danger">Clear Imported Route</button>
+      <div id="navlogStatus"></div>
     </div>
   </div>
 </div>
@@ -1252,6 +1277,178 @@ arcEditCancel.addEventListener('click', () => {
 });
 arcEditBackdrop.addEventListener('click', (e) => {
   if (e.target === arcEditBackdrop) arcEditCancel.click();
+});
+
+// --- Route Import: paste a SimBrief-style OFP navlog, draw the route ---
+// Parsed server-side by a deterministic regex extractor (not the LLM —
+// this is exact coordinate data, and a model re-typing digits risks
+// silently transposing a number). Each import replaces the previous one
+// (shared 'navlog-' id prefix), so pasting a new route cleans up the old.
+const navlogText = document.getElementById('navlogText');
+const navlogCallsign = document.getElementById('navlogCallsign');
+const navlogDrawBtn = document.getElementById('navlogDrawBtn');
+const navlogClearBtn = document.getElementById('navlogClearBtn');
+const navlogStatus = document.getElementById('navlogStatus');
+
+const COMPASS_16 = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+function bearingToCompass(deg) {
+  return COMPASS_16[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
+
+// Real radio calls use the airport's common name ("Stansted"), not its
+// ICAO code or full official name ("London Stansted Airport"). Strip the
+// "Airport" suffix and a leading "London " prefix (several UK airports
+// are named "London X Airport" in the data but nobody calls them that).
+function airportTrafficName(airport) {
+  if (!airport) return null;
+  let name = airport.name || airport.icao || airport.ident;
+  name = name.replace(/\s*(International\s+)?Airport\s*$/i, '').replace(/^London\s+/i, '').trim();
+  return name || airport.icao || airport.ident;
+}
+
+async function lookupAirportNear(lat, lon) {
+  try {
+    const res = await fetch(`/api/nearest-airport-frequencies?lat=${lat}&lon=${lon}`);
+    const data = await res.json();
+    return data.airport || null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildUnicomCallLabels(waypoints, callsign) {
+  const labels = [];
+  const first = waypoints[0];
+  const last = waypoints[waypoints.length - 1];
+
+  // --- Departure calls ---
+  const depAirport = await lookupAirportNear(first.lat, first.lon);
+  const depName = airportTrafficName(depAirport) || first.id;
+  let depTurnDir = 'ahead';
+  if (waypoints.length > 1) {
+    depTurnDir = bearingToCompass(initialBearingDeg({ lat: first.lat, lng: first.lon }, { lat: waypoints[1].lat, lng: waypoints[1].lon }));
+  }
+  labels.push({ id: 'navlog-call-holdshort', lat: first.lat, lon: first.lon,
+    text: `NOW: "${depName} Traffic, ${callsign}, holding short runway, departing to the ${depTurnDir}, ${depName}"` });
+  labels.push({ id: 'navlog-call-lineup', lat: first.lat + 0.0006, lon: first.lon + 0.0006,
+    text: `"${depName} Traffic, ${callsign}, lining up runway, ${depName}"` });
+  labels.push({ id: 'navlog-call-airborne', lat: first.lat + 0.02, lon: first.lon + 0.02,
+    text: `"${depName} Traffic, ${callsign}, airborne runway, turning ${depTurnDir}, climbing, ${depName}"` });
+
+  // --- Arrival calls, placed along the actual final inbound track -------
+  const destAirport = await lookupAirportNear(last.lat, last.lon);
+  const destName = airportTrafficName(destAirport) || last.id;
+  const secondLast = waypoints.length > 1 ? waypoints[waypoints.length - 2] : first;
+  const inboundBrg = initialBearingDeg({ lat: secondLast.lat, lng: secondLast.lon }, { lat: last.lat, lng: last.lon });
+  const outboundBrg = (inboundBrg + 180) % 360;
+  const arrivalDir = bearingToCompass(outboundBrg);
+
+  const p15 = destinationPoint(last.lat, last.lon, outboundBrg, 15);
+  const p5 = destinationPoint(last.lat, last.lon, outboundBrg, 5);
+  labels.push({ id: 'navlog-call-15nm', lat: p15[0], lon: p15[1],
+    text: `"${destName} Traffic, ${callsign}, 15 miles ${arrivalDir}, inbound, request join, ${destName}"` });
+  labels.push({ id: 'navlog-call-5nm', lat: p5[0], lon: p5[1],
+    text: `"${destName} Traffic, ${callsign}, 5 mile final, runway, ${destName}"` });
+  labels.push({ id: 'navlog-call-contact', lat: last.lat, lon: last.lon,
+    text: `By here: contact ${destName} Tower / cease blind calls once established with ATC` });
+
+  return labels.map((l) => ({ ...l, color: 'yellow' }));
+}
+
+function clearImportedNavlogRoute(save) {
+  const removedLabelIds = markings.labels.filter((l) => l.id.startsWith('navlog-')).map((l) => l.id);
+  for (const id of removedLabelIds) {
+    const marker = labelMarkers.get(id);
+    if (marker) map.removeLayer(marker);
+    labelMarkers.delete(id);
+  }
+  markings.labels = markings.labels.filter((l) => !l.id.startsWith('navlog-'));
+
+  const removedLineIds = markings.lines.filter((l) => l.id.startsWith('navlog-')).map((l) => l.id);
+  for (const id of removedLineIds) {
+    const layer = lineLayers.get(id);
+    if (layer) map.removeLayer(layer);
+    lineLayers.delete(id);
+  }
+  markings.lines = markings.lines.filter((l) => !l.id.startsWith('navlog-'));
+
+  if (save && (removedLabelIds.length || removedLineIds.length)) saveMarkings();
+  return removedLabelIds.length + removedLineIds.length;
+}
+
+navlogDrawBtn.addEventListener('click', async () => {
+  const text = navlogText.value;
+  if (!text.trim()) return;
+
+  navlogStatus.textContent = 'Parsing…';
+  navlogStatus.className = '';
+  navlogDrawBtn.disabled = true;
+  try {
+    const res = await fetch('/api/parse-navlog', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    if (data.waypoints.length < 2) {
+      navlogStatus.textContent = `Only found ${data.waypoints.length} waypoint(s) — doesn't look like a full navlog. Paste the whole flight log section.`;
+      navlogStatus.className = 'error';
+      return;
+    }
+
+    clearImportedNavlogRoute(false); // replaced below in the same save
+
+    for (const wp of data.waypoints) {
+      const label = { id: `navlog-${wp.id}`, lat: wp.lat, lon: wp.lon, text: wp.id, color: 'blue' };
+      markings.labels.push(label);
+      renderLabel(label);
+    }
+    const line = {
+      id: 'navlog-route',
+      points: data.waypoints.map((w) => [w.lat, w.lon]),
+      text: data.waypoints.map((w) => w.id).join(' . '),
+      color: '#00ccff',
+    };
+    markings.lines.push(line);
+    renderLine(line);
+
+    navlogStatus.textContent = 'Looking up departure/destination airports for UNICOM calls…';
+    let callsign = navlogCallsign.value.trim();
+    if (!callsign) {
+      try {
+        const posRes = await fetch('/api/position');
+        const pos = await posRes.json();
+        callsign = pos.callsign || 'CALLSIGN';
+      } catch {
+        callsign = 'CALLSIGN';
+      }
+    }
+    const callLabels = await buildUnicomCallLabels(data.waypoints, callsign);
+    for (const label of callLabels) {
+      markings.labels.push(label);
+      renderLabel(label);
+    }
+
+    saveMarkings();
+
+    navlogStatus.textContent =
+      `Drawn: ${data.waypoints.length} waypoints (${data.waypoints[0].id} → ${data.waypoints[data.waypoints.length - 1].id}) ` +
+      `+ ${callLabels.length} UNICOM calls (${callsign})`;
+    navlogStatus.className = 'ok';
+  } catch (err) {
+    navlogStatus.textContent = `Failed: ${err.message}`;
+    navlogStatus.className = 'error';
+  } finally {
+    navlogDrawBtn.disabled = false;
+  }
+});
+
+navlogClearBtn.addEventListener('click', () => {
+  const n = clearImportedNavlogRoute(true);
+  navlogStatus.textContent = n ? `Cleared ${n} imported marking(s).` : 'Nothing imported to clear.';
+  navlogStatus.className = 'ok';
 });
 
 // --- Ruler tool: double-click sets an origin, mouse movement shows live
