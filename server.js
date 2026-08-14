@@ -20,6 +20,48 @@ const FG_ROOT = process.env.FG_ROOT || '/Applications/fgdata_2024_1';
 const FIX_DAT_PATH = path.join(FG_ROOT, 'Navaids', 'fix.dat.gz');
 const TAXIWAY_GRAPHS_DIR = path.join(__dirname, 'taxiway-graphs');
 
+// Only keep fixes within this radius of EGCC so the payload stays small
+// and relevant, rather than shipping FlightGear's whole worldwide dataset.
+const EGCC = { lat: 53.3537, lon: -2.2750 };
+const WAYPOINT_RADIUS_NM = 80;
+
+function haversineNm(lat1, lon1, lat2, lon2) {
+  const R = 3440.065;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function loadWaypoints() {
+  try {
+    const gz = fs.readFileSync(FIX_DAT_PATH);
+    const text = zlib.gunzipSync(gz).toString('utf8');
+    const fixes = [];
+    for (const line of text.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length !== 3) continue;
+      const lat = parseFloat(parts[0]);
+      const lon = parseFloat(parts[1]);
+      const name = parts[2];
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !/^[A-Z0-9]{2,5}$/.test(name)) continue;
+      if (haversineNm(lat, lon, EGCC.lat, EGCC.lon) <= WAYPOINT_RADIUS_NM) {
+        fixes.push({ lat, lon, name });
+      }
+    }
+    console.log(`Loaded ${fixes.length} nav fixes within ${WAYPOINT_RADIUS_NM}nm of EGCC from ${FIX_DAT_PATH}`);
+    return fixes;
+  } catch (err) {
+    console.warn(`Could not load nav fixes from ${FIX_DAT_PATH}: ${err.message}`);
+    return [];
+  }
+}
+
+const WAYPOINTS = loadWaypoints();
+
 // --- Taxiway centerline graphs (real OSM pavement geometry) for routing.
 // Loaded once per airport code from taxiway-graphs/<ICAO>.json, each built
 // from OSM way node membership so shared nodes at intersections connect
@@ -660,6 +702,12 @@ const server = http.createServer(async (req, res) => {
       : { airport: null, frequencies: [] };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+    return;
+  }
+
+  if (req.url === '/api/waypoints' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(WAYPOINTS));
     return;
   }
 

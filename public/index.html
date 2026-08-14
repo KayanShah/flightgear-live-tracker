@@ -98,6 +98,23 @@
   #navlogStatus { font-size: 12px; color: #ccc; padding: 4px 2px 0; white-space: pre-wrap; }
   #navlogStatus.error { color: #ff6b6b; }
   #navlogStatus.ok { color: #6bdc8a; }
+  .leaflet-tooltip.waypoint-label {
+    background: transparent; border: none; box-shadow: none; padding: 0;
+    color: #8ecbff; font: bold 11px -apple-system, sans-serif;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 3px #000;
+    white-space: nowrap; user-select: none; pointer-events: none;
+  }
+  .leaflet-tooltip.waypoint-label::before { display: none; } /* kill the little arrow */
+  .taxi-label {
+    color: #ffdd00; font: bold 13px -apple-system, sans-serif;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 3px #000;
+    white-space: nowrap; cursor: move; user-select: none;
+  }
+  .taxi-label-taxiway {
+    color: #4da6ff; font: bold 13px -apple-system, sans-serif;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 3px #000;
+    white-space: nowrap; cursor: move; user-select: none;
+  }
   #measureTooltip {
     position: absolute; z-index: 1000; display: none;
     background: rgba(20,20,20,0.85); color: #fff;
@@ -227,6 +244,7 @@
     <div class="menu-panel">
       <button id="followBtn">Autofollow</button>
       <button id="headingLineBtn">Heading Line</button>
+      <button id="waypointsBtn">Waypoints</button>
       <hr />
       <button id="trailClearBtn">Clear Trail</button>
     </div>
@@ -1589,6 +1607,51 @@ map.on('mousemove', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && measureOrigin) clearMeasure();
 });
+
+// --- Nav waypoint fixes (from FlightGear's own Navaids/fix.dat) --------
+// These are enroute/terminal fixes spread across ~80nm — meaningful at
+// regional zoom, but pure clutter once you're zoomed into street level,
+// so the layer auto-hides past WAYPOINT_MAX_ZOOM regardless of the toggle.
+const waypointsBtn = document.getElementById('waypointsBtn');
+const WAYPOINT_MAX_ZOOM = 12;
+let waypointsOn = false;
+let waypointsLayer = null;
+let waypointsLoaded = false;
+
+async function ensureWaypointsLoaded() {
+  if (waypointsLoaded) return;
+  waypointsLoaded = true;
+  const res = await fetch('/api/waypoints');
+  const fixes = await res.json();
+  waypointsLayer = L.layerGroup(
+    fixes.map((fx) =>
+      L.circleMarker([fx.lat, fx.lon], {
+        radius: 4,
+        color: '#0d1b2a',
+        fillColor: '#8ecbff',
+        fillOpacity: 1,
+        weight: 1.5,
+      }).bindTooltip(fx.name, { permanent: true, direction: 'top', className: 'waypoint-label', offset: [0, -6] })
+    )
+  );
+}
+
+function updateWaypointsVisibility() {
+  if (!waypointsLayer) return;
+  const shouldShow = waypointsOn && map.getZoom() <= WAYPOINT_MAX_ZOOM;
+  const isShown = map.hasLayer(waypointsLayer);
+  if (shouldShow && !isShown) waypointsLayer.addTo(map);
+  else if (!shouldShow && isShown) map.removeLayer(waypointsLayer);
+}
+
+waypointsBtn.addEventListener('click', async () => {
+  waypointsOn = !waypointsOn;
+  waypointsBtn.classList.toggle('toggle-on', waypointsOn);
+  if (waypointsOn) await ensureWaypointsLoaded();
+  updateWaypointsVisibility();
+});
+
+map.on('zoomend', updateWaypointsVisibility);
 
 loadMarkings().then(async () => {
   // One-time migration: pull in anything saved under the old
