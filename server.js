@@ -375,6 +375,171 @@ function writeMarkingsAtomic(data) {
   fs.renameSync(tmpFile, MARKINGS_FILE); // atomic on the same filesystem
 }
 
+// --- Taxi instruction parsing: turn ATC phrasing into an ordered list of
+// real taxiway/holding-point identifiers already placed on the map -------
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
+const TAXI_INSTRUCTION_RADIUS_NM = 3; // scope to "whichever airport you're at"
+
+const PHONETIC = {
+  alpha: 'A', bravo: 'B', charlie: 'C', delta: 'D', echo: 'E', foxtrot: 'F',
+  golf: 'G', hotel: 'H', india: 'I', juliet: 'J', juliett: 'J', kilo: 'K',
+  lima: 'L', mike: 'M', november: 'N', oscar: 'O', papa: 'P', quebec: 'Q',
+  romeo: 'R', sierra: 'S', tango: 'T', uniform: 'U', victor: 'V',
+  whiskey: 'W', xray: 'X', 'x-ray': 'X', yankee: 'Y', zulu: 'Z',
+};
+const NUMBER_WORDS = {
+  zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5',
+  six: '6', seven: '7', eight: '8', nine: '9', niner: '9',
+};
+
+function findNearbyLabels(markings, lat, lon, radiusNm) {
+  return markings.labels.filter((l) => haversineNm(l.lat, l.lon, lat, lon) <= radiusNm);
+}
+
+const LETTER_TO_PHONETIC = {};
+for (const [word, letter] of Object.entries(PHONETIC)) {
+  (LETTER_TO_PHONETIC[letter] ??= []).push(word);
+}
+const DIGIT_TO_WORD = {};
+for (const [word, digit] of Object.entries(NUMBER_WORDS)) {
+  (DIGIT_TO_WORD[digit] ??= []).push(word);
+}
+
+// Grounding check: an LLM can get the ordering right but still hallucinate
+// an identifier that was never actually said. Before trusting anything it
+// returns, verify each identifier (or its phonetic spelling) is genuinely
+// present in the original clearance text — reject it otherwise.
+function isIdentifierGrounded(id, lowerText) {
+  if (new RegExp(`\\b${id.toLowerCase()}\\b`).test(lowerText)) return true;
+  const letters = id.match(/^[A-Za-z]+/)?.[0] || '';
+  const digits = id.match(/\d+$/)?.[0] || '';
+  for (const ch of letters) {
+    const words = LETTER_TO_PHONETIC[ch.toUpperCase()] || [];
+    if (!new RegExp(`\\b(${ch.toLowerCase()}|${words.join('|')})\\b`).test(lowerText)) return false;
+  }
+  if (digits) {
+    const words = digits.split('').flatMap((d) => DIGIT_TO_WORD[d] || []);
+    if (!new RegExp(`\\b(${digits}|${words.join('|')})\\b`).test(lowerText)) return false;
+  }
+  return true;
+}
+
+// Deterministic fallback (no LLM needed): normalize phonetic words/number
+// words to letters/digits, then scan for runs that match a known identifier.
+// Normalizes one phrase ("Echo", "Juliet One", "J1", "delta") down to a
+// bare identifier code ("E", "J1", "J1", "D"). Used both for the scripted
+// parser and to clean up the LLM's output, since it reliably gets the
+// *order* right but doesn't always convert phonetic words to codes itself
+// despite being asked to.
+function phraseToIdentifierCode(phrase) {
+  const words = phrase
+    .replace(/[.,;]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => {
+      const lower = w.toLowerCase();
+      if (PHONETIC[lower]) return PHONETIC[lower];
+      if (NUMBER_WORDS[lower]) return NUMBER_WORDS[lower];
+      if (/^\d+$/.test(w)) return w;
+      if (/^[A-Za-z]{1,2}\d*$/.test(w)) return w.toUpperCase();
+      return null;
+    })
+    .filter(Boolean);
+  return words.join('');
+}
+
+function parseTaxiInstructionScripted(text, candidates) {
+  const upperToOriginal = new Map(candidates.map((c) => [c.toUpperCase(), c]));
+  const words = text
+    .replace(/[.,;]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => {
+      const lower = w.toLowerCase();
+      if (PHONETIC[lower]) return PHONETIC[lower];
+      if (NUMBER_WORDS[lower]) return NUMBER_WORDS[lower];
+      if (/^\d+$/.test(w)) return w;
+      if (/^[A-Za-z]{1,2}\d*$/.test(w)) return w.toUpperCase();
+      return null;
+    });
+
+  const sequence = [];
+  for (let i = 0; i < words.length; i++) {
+    if (!words[i]) continue;
+    // Letter directly followed by a number token ("Delta" "9" -> "D9")
+    if (/^[A-Z]{1,2}$/.test(words[i]) && words[i + 1] && /^\d+$/.test(words[i + 1])) {
+      const combo = words[i] + words[i + 1];
+      if (upperToOriginal.has(combo)) {
+        const orig = upperToOriginal.get(combo);
+        if (!sequence.includes(orig)) sequence.push(orig);
+        i++;
+        continue;
+      }
+    }
+    if (upperToOriginal.has(words[i])) {
+      const orig = upperToOriginal.get(words[i]);
+      if (!sequence.includes(orig)) sequence.push(orig);
+    }
+  }
+  return sequence;
+}
+
+async function parseTaxiInstructionLLM(text, candidates) {
+  const prompt =
+    `You convert an ATC ground taxi clearance into an ordered JSON array of taxiway/holding-point identifiers.\n` +
+    `Valid identifiers at this airport (use ONLY these, exact casing): ${candidates.join(', ')}\n` +
+    `Phonetic alphabet words (Alpha, Bravo, ...) mean their letter ALONE ("Juliet" by itself means "J", ` +
+    `NOT "J1" — only attach a number if a number word/digit immediately follows, e.g. "Juliet One" or ` +
+    `"Juliet 1" means "J1"). Ignore runway/gate/stand mentions entirely, only list taxiway and holding ` +
+    `point identifiers, in the order the aircraft would actually travel them (the "via" list, in order). ` +
+    `A clearance limit stated at the start (e.g. "Taxi to holding point J1 via...") is the FINAL destination ` +
+    `— it belongs at the END of the array, not the start, even though it's mentioned first in the sentence. ` +
+    `If the same identifier is effectively mentioned twice (once as the stated clearance limit, once again ` +
+    `at the end as "hold short ... at Juliet one"), only include it ONCE, at the end.\n` +
+    `Clearance: "${text}"\n` +
+    `Respond with ONLY a JSON array of strings, nothing else, e.g. ["B","D","J1"]`;
+
+  const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: false, options: { temperature: 0 } }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error(`Ollama returned ${res.status}`);
+  const data = await res.json();
+  const match = data.response.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error('Model did not return a JSON array');
+  const parsed = JSON.parse(match[0]);
+  const upperToOriginal = new Map(candidates.map((c) => [c.toUpperCase(), c]));
+  const lowerText = text.toLowerCase();
+  const sequence = [];
+  for (const item of parsed) {
+    if (typeof item !== 'string') continue;
+    // Try the raw item first (model may have already given "J1"), then
+    // fall back to normalizing phonetic/number words ("Juliet One" -> "J1").
+    const code = upperToOriginal.has(item.toUpperCase()) ? item.toUpperCase() : phraseToIdentifierCode(item);
+    if (!upperToOriginal.has(code)) continue;
+    // Reject anything the model invented that isn't actually traceable
+    // back to the clearance text — better to under-draw than hallucinate
+    // a waypoint that was never said.
+    if (!isIdentifierGrounded(code, lowerText)) continue;
+    sequence.push(upperToOriginal.get(code));
+  }
+  // If something's mentioned twice (stated clearance limit + repeated at
+  // the end), keep only its LAST occurrence — that's the one that reflects
+  // where it actually belongs in the route.
+  const deduped = [];
+  const seen = new Set();
+  for (let i = sequence.length - 1; i >= 0; i--) {
+    if (!seen.has(sequence[i])) {
+      seen.add(sequence[i]);
+      deduped.unshift(sequence[i]);
+    }
+  }
+  return deduped;
+}
+
 // --- SimBrief-style OFP navlog parser -----------------------------------
 // Deterministic regex extraction, not LLM-based: this is exact structured
 // coordinate data (DDMM.m / DDDMM.m format), and an LLM re-typing digits
@@ -506,6 +671,57 @@ const server = http.createServer(async (req, res) => {
       const result = parseNavlog(text);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/taxi-route' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { text, lat, lon } = JSON.parse(body);
+      if (typeof text !== 'string' || !text.trim() || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+        throw new Error('Expected { text, lat, lon }');
+      }
+      const markings = readMarkings();
+      const nearby = findNearbyLabels(markings, lat, lon, TAXI_INSTRUCTION_RADIUS_NM);
+      const candidateTexts = [...new Set(nearby.map((l) => l.text))];
+
+      let sequenceTexts;
+      let usedLLM = true;
+      try {
+        sequenceTexts = await parseTaxiInstructionLLM(text, candidateTexts);
+        if (sequenceTexts.length === 0) throw new Error('empty result, falling back');
+      } catch (err) {
+        console.warn(`Ollama parse failed (${err.message}), falling back to scripted parser`);
+        usedLLM = false;
+        sequenceTexts = parseTaxiInstructionScripted(text, candidateTexts);
+      }
+
+      // Resolve each identifier to real coordinates, picking whichever
+      // instance (of a repeated letter) is nearest the previous point.
+      let cursor = { lat, lon };
+      const points = [];
+      const resolved = [];
+      for (const t of sequenceTexts) {
+        const options = nearby.filter((l) => l.text === t);
+        if (options.length === 0) continue;
+        const best = options.reduce((a, b) =>
+          haversineNm(cursor.lat, cursor.lon, a.lat, a.lon) <= haversineNm(cursor.lat, cursor.lon, b.lat, b.lon) ? a : b
+        );
+        points.push([best.lat, best.lon]);
+        resolved.push(t);
+        cursor = best;
+      }
+
+      // Snap the waypoint-to-waypoint hops onto real taxiway pavement
+      // instead of drawing straight lines across grass/buildings.
+      const routedPoints = routeAlongTaxiways(points, lat, lon);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sequence: resolved, points: routedPoints, usedLLM }));
     } catch (err) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));

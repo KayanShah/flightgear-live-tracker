@@ -73,6 +73,16 @@
     border: 2px solid transparent;
   }
   #colorPicker .swatch.selected { border-color: #fff; }
+  #taxiPanel { min-width: 260px; }
+  #taxiInstructionText {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    background: #1c1c1c; color: #fff; border: 1px solid #555; border-radius: 6px;
+    padding: 8px; font: 13px -apple-system, sans-serif; margin-bottom: 6px;
+  }
+  #taxiDrawBtn.primary-action { background: #2f7dd6 !important; border-color: #2f7dd6; color: #fff; text-align: center; }
+  #taxiStatus { font-size: 12px; color: #ccc; padding: 4px 2px 0; white-space: pre-wrap; }
+  #taxiStatus.error { color: #ff6b6b; }
+  #taxiStatus.ok { color: #6bdc8a; }
   #navlogPanel { min-width: 300px; }
   #navlogText {
     width: 100%; box-sizing: border-box; resize: vertical;
@@ -248,6 +258,14 @@
       <button id="navlogDrawBtn" class="primary-action">Draw Route + UNICOM Calls</button>
       <button id="navlogClearBtn" class="danger">Clear Imported Route</button>
       <div id="navlogStatus"></div>
+    </div>
+  </div>
+  <div class="menu" id="taxiMenu">
+    <button class="menu-trigger">Taxi Route</button>
+    <div class="menu-panel" id="taxiPanel">
+      <textarea id="taxiInstructionText" rows="3" placeholder="e.g. Taxi to holding point Juliet 1 via Delta, Bravo"></textarea>
+      <button id="taxiDrawBtn" class="primary-action">Draw Route</button>
+      <div id="taxiStatus"></div>
     </div>
   </div>
 </div>
@@ -1277,6 +1295,64 @@ arcEditCancel.addEventListener('click', () => {
 });
 arcEditBackdrop.addEventListener('click', (e) => {
   if (e.target === arcEditBackdrop) arcEditCancel.click();
+});
+
+// --- Taxi Route: turn an ATC clearance into a drawn green route --------
+// Parsed server-side (LLM via Ollama, with a scripted phonetic-alphabet
+// fallback), scoped to whichever airport's labels are near the plane.
+const taxiInstructionText = document.getElementById('taxiInstructionText');
+const taxiDrawBtn = document.getElementById('taxiDrawBtn');
+const taxiStatus = document.getElementById('taxiStatus');
+
+taxiDrawBtn.addEventListener('click', async () => {
+  const text = taxiInstructionText.value.trim();
+  if (!text) return;
+  if (!lastKnownPosition) {
+    taxiStatus.textContent = 'No position from FlightGear yet — can\'t tell which airport you mean.';
+    taxiStatus.className = 'error';
+    return;
+  }
+
+  taxiStatus.textContent = 'Parsing…';
+  taxiStatus.className = '';
+  taxiDrawBtn.disabled = true;
+  try {
+    const res = await fetch('/api/taxi-route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lat: lastKnownPosition.lat, lon: lastKnownPosition.lon }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    if (data.points.length < 2) {
+      taxiStatus.textContent =
+        `Couldn't match enough identifiers near your position (found: ${data.sequence.join(', ') || 'none'}). ` +
+        `Try naming taxiways/holding points that are already labelled on the map.`;
+      taxiStatus.className = 'error';
+      return;
+    }
+
+    const line = {
+      id: Date.now() + '-' + Math.random(),
+      points: data.points,
+      text: data.sequence.join(' → '),
+      color: '#33cc33',
+      taxiRoute: true,
+    };
+    markings.lines.push(line);
+    strokeStack.push({ type: 'line', id: line.id });
+    saveMarkings();
+    renderLine(line);
+
+    taxiStatus.textContent = `Drawn via ${data.usedLLM ? 'AI' : 'scripted'} parsing: ${data.sequence.join(' → ')}`;
+    taxiStatus.className = 'ok';
+  } catch (err) {
+    taxiStatus.textContent = `Failed: ${err.message}`;
+    taxiStatus.className = 'error';
+  } finally {
+    taxiDrawBtn.disabled = false;
+  }
 });
 
 // --- Route Import: paste a SimBrief-style OFP navlog, draw the route ---
