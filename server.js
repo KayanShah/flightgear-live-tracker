@@ -361,6 +361,8 @@ const PROPS = {
   callsign: 'sim/multiplay/callsign',
   windFromDeg: 'environment/wind-from-heading-deg',
   windSpeedKt: 'environment/wind-speed-kt',
+  comFreq: 'instrumentation/comm/frequencies/selected-mhz',
+  squawk: 'instrumentation/transponder/id-code',
 };
 
 async function fetchProp(propPath) {
