@@ -359,6 +359,8 @@ const PROPS = {
   heading: 'orientation/heading-deg',
   groundspeedKt: 'velocities/groundspeed-kt',
   callsign: 'sim/multiplay/callsign',
+  windFromDeg: 'environment/wind-from-heading-deg',
+  windSpeedKt: 'environment/wind-speed-kt',
 };
 
 async function fetchProp(propPath) {

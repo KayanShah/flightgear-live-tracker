@@ -711,7 +711,7 @@ async function poll() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    const { lat, lon, altFt, heading, groundspeedKt, callsign, ts } = data;
+    const { lat, lon, altFt, heading, groundspeedKt, callsign, windFromDeg, windSpeedKt, ts } = data;
     connDot.className = 'ok';
     lastKnownPosition = { lat, lon, heading };
 
@@ -748,6 +748,21 @@ async function poll() {
       `${callsign ? `<b>${callsign}</b><br/>` : ''}` +
       `Lat: ${lat.toFixed(5)} &nbsp; Lon: ${lon.toFixed(5)}<br/>` +
       `Alt: ${Math.round(altFt)} ft &nbsp; Hdg: ${Math.round(heading)}&deg; &nbsp; GS: ${Math.round(groundspeedKt)} kt<br/>`;
+
+    let windLine = '';
+    if (Number.isFinite(windFromDeg) && Number.isFinite(windSpeedKt)) {
+      const rel = ((windFromDeg - heading + 540) % 360) - 180;
+      const crossKt = windSpeedKt * Math.sin(toRad(rel));
+      const headKt = windSpeedKt * Math.cos(toRad(rel));
+      const crossLabel = crossKt >= 0 ? 'R' : 'L';
+      const alongLabel = headKt >= 0 ? 'Hwind' : 'Twind';
+      windLine =
+        `Wind: ${Math.round(windFromDeg).toString().padStart(3, '0')}&deg;/${Math.round(windSpeedKt)}kt` +
+        ` &nbsp; Xwind: ${Math.round(Math.abs(crossKt))}kt ${crossLabel}` +
+        ` &nbsp; ${alongLabel}: ${Math.round(Math.abs(headKt))}kt<br/>`;
+    }
+
+    hudText.innerHTML += windLine;
   } catch (err) {
     connDot.className = 'bad';
     hudText.innerHTML = `<span class="stale">No data from FlightGear (${err.message})</span>`;
