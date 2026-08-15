@@ -363,6 +363,7 @@ const PROPS = {
   windSpeedKt: 'environment/wind-speed-kt',
   comFreq: 'instrumentation/comm/frequencies/selected-mhz',
   squawk: 'instrumentation/transponder/id-code',
+  vsFps: 'velocities/vertical-speed-fps',
 };
 
 async function fetchProp(propPath) {
@@ -373,13 +374,20 @@ async function fetchProp(propPath) {
   return data.value;
 }
 
+// One connection at a time, not Promise.all — FlightGear's embedded httpd
+// appears to be effectively single-threaded, and firing all 10 property
+// requests concurrently was enough to choke it (especially once the sim
+// itself is CPU-loaded), piling up hung connections until things timed out.
 async function fetchPosition() {
   const result = {};
   for (const [key, propPath] of Object.entries(PROPS)) {
     result[key] = await fetchProp(propPath);
   }
+  result.vsFpm = Math.round(result.vsFps * 60);
+  delete result.vsFps;
   return result;
 }
+
 // --- Single central poller for FlightGear's httpd -----------------------
 // Previously, both the flight-history logger AND every incoming
 // /api/position request independently called fetchPosition() (10 separate
