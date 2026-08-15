@@ -267,6 +267,7 @@
       <button id="waypointsBtn">Waypoints</button>
       <hr />
       <button id="trailClearBtn">Clear Trail</button>
+      <button id="flightLogClearBtn" class="danger">Clear Flight Log</button>
     </div>
   </div>
   <div class="menu" id="markupMenu">
@@ -654,6 +655,25 @@ function addTrailPoint(lat, lon, ts) {
     trailLine.setLatLngs(trailPoints);
   }
 }
+
+// Browsers throttle setInterval heavily (sometimes to a near-stop) in a
+// background tab, which used to mean the trail just jumped in a straight
+// line from the last point to wherever the plane ended up. The server
+// keeps logging continuously regardless of the tab's visibility, so on
+// regaining focus we backfill from that log instead of trusting the gap.
+async function backfillTrail() {
+  try {
+    const res = await fetch(`/api/flight-log/since?ts=${lastTrailTs}`);
+    const entries = await res.json();
+    entries.sort((a, b) => a.ts - b.ts);
+    for (const e of entries) addTrailPoint(e.lat, e.lon, e.ts);
+  } catch {
+    // best-effort; live polling will just resume from wherever we are
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') backfillTrail();
+});
 
 // --- Departure/nearest airport frequencies, refreshed occasionally -----
 const hudFreqBlock = document.getElementById('hudFreqBlock');

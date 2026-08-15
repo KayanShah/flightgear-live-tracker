@@ -376,6 +376,49 @@ async function fetchPosition() {
   }
   return result;
 }
+// --- Single central poller for FlightGear's httpd -----------------------
+// Previously, both the flight-history logger AND every incoming
+// /api/position request independently called fetchPosition() (10 separate
+// property requests each). With a client poll every second plus the
+// logger's own timer, that was up to ~20 concurrent connections/sec
+// against FlightGear's small embedded httpd — enough to pile up hung
+// SYN_SENT sockets and start timing everything out. Now there's exactly
+// one fetch per second, cached here; /api/position just serves the cache.
+let latestPosition = null;
+let latestPositionError = null;
+let latestPositionTs = 0;
+
+// --- Flight history logging --------------------------------------------
+// Runs on its own server-side interval (independent of the browser tab
+// being open) so a continuous record exists for later turn/maneuver
+// analysis. One append-only JSONL file per server run, under flight-logs/.
+const FLIGHT_LOG_DIR = path.join(__dirname, 'flight-logs');
+const FLIGHT_LOG_INTERVAL_MS = 1000;
+let flightLogPath = null;
+let flightLogStream = null;
+
+function startFlightLogging() {
+  fs.mkdirSync(FLIGHT_LOG_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  flightLogPath = path.join(FLIGHT_LOG_DIR, `flight-${stamp}.jsonl`);
+  flightLogStream = fs.createWriteStream(flightLogPath, { flags: 'a' });
+  console.log(`Logging flight history to ${flightLogPath}`);
+
+  setInterval(async () => {
+    try {
+      const pos = await fetchPosition();
+      latestPosition = pos;
+      latestPositionError = null;
+      latestPositionTs = Date.now();
+      flightLogStream.write(JSON.stringify({ ts: latestPositionTs, ...pos }) + '\n');
+    } catch (err) {
+      // FlightGear not reachable right now — skip this sample, the
+      // timestamp gap in the log makes the outage visible after the fact.
+      latestPositionError = err.message;
+    }
+  }, FLIGHT_LOG_INTERVAL_MS);
+}
+
 const MIME = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -657,13 +700,15 @@ function readBody(req) {
 
 const server = http.createServer(async (req, res) => {
   if (req.url === '/api/position') {
-    try {
-      const pos = await fetchPosition();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ...pos, ts: Date.now() }));
-    } catch (err) {
+    if (latestPositionError) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      res.end(JSON.stringify({ error: latestPositionError }));
+    } else if (!latestPosition) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Waiting for first sample from FlightGear' }));
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...latestPosition, ts: latestPositionTs }));
     }
     return;
   }
@@ -702,6 +747,41 @@ const server = http.createServer(async (req, res) => {
       : { airport: null, frequencies: [] };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+    return;
+  }
+
+  if (req.url === '/api/flight-log/clear' && req.method === 'POST') {
+    try {
+      if (flightLogStream) flightLogStream.end();
+      if (flightLogPath) fs.writeFileSync(flightLogPath, '');
+      flightLogStream = fs.createWriteStream(flightLogPath, { flags: 'a' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (req.url.startsWith('/api/flight-log/since') && req.method === 'GET') {
+    try {
+      const sinceTs = Number(new URL(req.url, `http://${req.headers.host}`).searchParams.get('ts')) || 0;
+      let entries = [];
+      if (flightLogPath && fs.existsSync(flightLogPath)) {
+        const text = fs.readFileSync(flightLogPath, 'utf8');
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue;
+          const entry = JSON.parse(line);
+          if (entry.ts > sinceTs) entries.push(entry);
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(entries));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
