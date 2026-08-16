@@ -705,13 +705,43 @@ async function refreshAirportFrequencies(lat, lon) {
   }
 }
 
+// --- VATSIM: which frequency should I actually be on right now? --------
+// Matches live online controllers to the nearest airport, picked for the
+// current flight phase (ground/near-field/enroute). Falls back to "no ATC
+// online" so you know to use the UNICOM self-announce calls instead.
+const hudAtcBlock = document.getElementById('hudAtcBlock');
+let lastAtcFetch = 0;
+const ATC_REFRESH_MS = 16000; // VATSIM's own feed only regenerates every 15s
+
+async function refreshAtcFrequency(lat, lon, altFt, groundspeedKt) {
+  const now = Date.now();
+  if (now - lastAtcFetch < ATC_REFRESH_MS) return;
+  lastAtcFetch = now;
+  try {
+    const res = await fetch(`/api/atc-frequency?lat=${lat}&lon=${lon}&altFt=${altFt}&groundspeedKt=${groundspeedKt}`);
+    const data = await res.json();
+    if (!data.airport) {
+      hudAtcBlock.innerHTML = '';
+      return;
+    }
+    if (!data.tier || data.controllers.length === 0) {
+      hudAtcBlock.innerHTML = `<span class="atc-none">ATC: none online at ${data.airport.icao} — use UNICOM</span>`;
+      return;
+    }
+    const list = data.controllers.map((c) => `${c.callsign} ${c.frequency}`).join(' / ');
+    hudAtcBlock.innerHTML = `<span class="atc-live">ATC (${data.tier}): ${list}</span>`;
+  } catch {
+    // leave whatever was last shown
+  }
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/position');
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    const { lat, lon, altFt, heading, groundspeedKt, callsign, windFromDeg, windSpeedKt, ts } = data;
+    const { lat, lon, altFt, heading, groundspeedKt, callsign, windFromDeg, windSpeedKt, comFreq, squawk, vsFpm, ts } = data;
     connDot.className = 'ok';
     lastKnownPosition = { lat, lon, heading };
 
@@ -744,11 +774,6 @@ async function poll() {
       map.panTo([lat, lon], { animate: true, duration: 0.8 });
     }
 
-    hudText.innerHTML =
-      `${callsign ? `<b>${callsign}</b><br/>` : ''}` +
-      `Lat: ${lat.toFixed(5)} &nbsp; Lon: ${lon.toFixed(5)}<br/>` +
-      `Alt: ${Math.round(altFt)} ft &nbsp; Hdg: ${Math.round(heading)}&deg; &nbsp; GS: ${Math.round(groundspeedKt)} kt<br/>`;
-
     let windLine = '';
     if (Number.isFinite(windFromDeg) && Number.isFinite(windSpeedKt)) {
       const rel = ((windFromDeg - heading + 540) % 360) - 180;
@@ -762,12 +787,27 @@ async function poll() {
         ` &nbsp; ${alongLabel}: ${Math.round(Math.abs(headKt))}kt<br/>`;
     }
 
-    hudText.innerHTML += windLine;
+    const freqLine =
+      Number.isFinite(comFreq) || Number.isFinite(squawk)
+        ? `COM: ${Number.isFinite(comFreq) ? comFreq.toFixed(3) : '---'} &nbsp; Sqk: ${Number.isFinite(squawk) ? squawk.toString().padStart(4, '0') : '----'}<br/>`
+        : '';
+
+    hudText.innerHTML =
+      `${callsign ? `<b>${callsign}</b><br/>` : ''}` +
+      `Lat: ${lat.toFixed(5)} &nbsp; Lon: ${lon.toFixed(5)}<br/>` +
+      `Alt: ${Math.round(altFt)} ft &nbsp; Hdg: ${Math.round(heading)}&deg; &nbsp; GS: ${Math.round(groundspeedKt)} kt<br/>` +
+      `FPM: ${vsFpm >= 0 ? '+' : ''}${vsFpm}<br/>` +
+      windLine +
+      freqLine;
+
+    refreshAirportFrequencies(lat, lon);
+    refreshAtcFrequency(lat, lon, altFt, groundspeedKt);
   } catch (err) {
     connDot.className = 'bad';
     hudText.innerHTML = `<span class="stale">No data from FlightGear (${err.message})</span>`;
   }
 }
+
 poll();
 setInterval(poll, 1000);
 

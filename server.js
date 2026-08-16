@@ -352,6 +352,71 @@ function findNearestAirport(lat, lon, maxNm = 8) {
   return best;
 }
 
+// --- VATSIM ATC frequency advisory ---------------------------------------
+// "Which frequency should I be on right now?" — matches currently online
+// VATSIM controllers to the nearest airport by callsign prefix, then picks
+// the right tier for the current flight phase. The my.vatsim.net "AIP
+// stations" endpoint would be a cleaner reference (it's the fixed list of
+// positions an airport *can* have), but its coverage is spotty outside the
+// US/DE/SG (confirmed EGCC/EGLL/EGKK/LFPG/RJTT all 404 there) — so this
+// uses the live data feed instead, which covers every airport globally,
+// just with looser (callsign-prefix) matching.
+const VATSIM_DATA_URL = 'https://data.vatsim.net/v3/vatsim-data.json';
+const VATSIM_CACHE_MS = 15000; // matches VATSIM's own feed refresh cadence
+let vatsimCache = { data: null, ts: 0 };
+
+async function fetchVatsimData() {
+  if (vatsimCache.data && Date.now() - vatsimCache.ts < VATSIM_CACHE_MS) {
+    return vatsimCache.data;
+  }
+  const res = await fetch(VATSIM_DATA_URL, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`VATSIM feed returned ${res.status}`);
+  const data = await res.json();
+  vatsimCache = { data, ts: Date.now() };
+  return data;
+}
+
+// Position-type tier from a controller callsign's last underscore-segment
+// ("EGCC_APP" -> APP, "LAX_S_TWR" -> TWR). DEP is grouped with APP since
+// we don't reliably know arrival vs departure phase.
+function controllerTier(callsign) {
+  const seg = callsign.split('_').pop();
+  if (seg === 'DEL') return 'DEL';
+  if (seg === 'GND') return 'GND';
+  if (seg === 'TWR') return 'TWR';
+  if (seg === 'APP' || seg === 'DEP') return 'APP';
+  if (seg === 'CTR' || seg === 'FSS') return 'CTR';
+  return null; // ATIS/SUP/OBS/etc. — not a working frequency to call
+}
+
+async function findAtcFrequency({ lat, lon, altFt, groundspeedKt }) {
+  const airport = findNearestAirport(lat, lon, 40);
+  if (!airport) return { airport: null, tier: null, controllers: [] };
+
+  const vatsim = await fetchVatsimData();
+  const prefixes = [airport.icao, airport.iata].filter(Boolean).map((p) => `${p}_`);
+  const nearby = vatsim.controllers.filter(
+    (c) => c.facility > 0 && prefixes.some((p) => c.callsign.startsWith(p))
+  );
+
+  const distNm = haversineNm(lat, lon, airport.lat, airport.lon);
+  const onGround = groundspeedKt < 30 && altFt < 1000 + (airport.elevationFt || 0);
+  const nearField = distNm < 15 && altFt < 10000;
+  const order = onGround ? ['DEL', 'GND', 'TWR', 'APP', 'CTR'] : nearField ? ['TWR', 'APP', 'CTR', 'GND'] : ['APP', 'CTR'];
+
+  for (const tier of order) {
+    const matches = nearby.filter((c) => controllerTier(c.callsign) === tier);
+    if (matches.length > 0) {
+      return {
+        airport: { icao: airport.icao, name: airport.name },
+        tier,
+        controllers: matches.map((c) => ({ callsign: c.callsign, frequency: c.frequency })),
+      };
+    }
+  }
+  return { airport: { icao: airport.icao, name: airport.name }, tier: null, controllers: [] };
+}
+
 const PROPS = {
   lat: 'position/latitude-deg',
   lon: 'position/longitude-deg',
@@ -741,6 +806,28 @@ const server = http.createServer(async (req, res) => {
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(results));
+    return;
+  }
+
+  if (req.url.startsWith('/api/atc-frequency') && req.method === 'GET') {
+    const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
+    const lat = Number(params.get('lat'));
+    const lon = Number(params.get('lon'));
+    const altFt = Number(params.get('altFt')) || 0;
+    const groundspeedKt = Number(params.get('groundspeedKt')) || 0;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Expected ?lat=&lon=' }));
+      return;
+    }
+    try {
+      const result = await findAtcFrequency({ lat, lon, altFt, groundspeedKt });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
