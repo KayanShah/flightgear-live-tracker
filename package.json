@@ -1,0 +1,14 @@
+{
+  "name": "flightgear-live-tracker",
+  "version": "1.0.0",
+  "description": "Live map tracker for FlightGear: position, taxiway/holding-point labels, ATC-instruction-to-route drawing, and more.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
