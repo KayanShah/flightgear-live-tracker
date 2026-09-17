@@ -82,3 +82,7 @@ All optional, set as environment variables before starting the server:
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server address |
 | `OLLAMA_MODEL` | `llama3` | Model used for Taxi Route parsing |
 
+## Data & attribution
+
+- Taxiway/holding-point data in `taxiway-graphs/` and the map tiles themselves are © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, available under the [ODbL](https://opendatacommons.org/licenses/odbl/).
+
