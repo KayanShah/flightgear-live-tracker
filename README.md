@@ -90,3 +90,8 @@ All optional, set as environment variables before starting the server:
 - Live ATC data from the [VATSIM](https://vatsim.net) public data feed.
 - Nav fix data from FlightGear's own bundled `Navaids/fix.dat`.
 
+## Notes
+
+- `markings.json` (your labels/lines/arcs) and `flight-logs/` are created automatically on first run and are gitignored — they're your own data, not shared by this repo.
+- Every save to `markings.json` is atomic and automatically backed up to `markings-backups/` beforehand, so accidental edits/deletions are always recoverable.
+
