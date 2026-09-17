@@ -59,3 +59,5 @@ Continuous server-side position logging, independent of the browser tab, for pos
    curl -L -o airport-frequencies.csv https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv
    ```
 
+3. **Launch FlightGear** with `--httpd=8080` as above, and load into a flight.
+
