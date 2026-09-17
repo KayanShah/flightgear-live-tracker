@@ -99,3 +99,6 @@ All optional, set as environment variables before starting the server:
 
 This project grew feature-by-feature over many iterations — see the [commit history](https://github.com/KayanShah/flightgear-live-tracker/commits/main) for the full build-up, from the initial live-position prototype through each markup tool, taxiway graph, and integration added afterwards.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
