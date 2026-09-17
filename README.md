@@ -1,13 +1,12 @@
 # FlightGear Live Tracker
 
-<img width="250" height="250" alt="image" src="https://github.com/user-attachments/assets/28551a1e-e334-4b49-bd26-4a1b05514cb1" />
-
+<img width="180" height="180" alt="FlightGear Live Tracker" src="https://github.com/user-attachments/assets/28551a1e-e334-4b49-bd26-4a1b05514cb1" />
 
 A local web app that shows your FlightGear aircraft moving on a real map in real time — built for VFR/IFR situational awareness, taxi guidance, and route planning.
 
-> **Recognised officially by FlightGear** as a project with tools for the community 
+> **Officially recognised by FlightGear** as a community project offering useful tools for FlightGear pilots.
 
-> **Unofficial personal project.** Not affiliated with, endorsed by, or sponsored by VATSIM, or OurAirports. All trademarks belong to their respective owners.
+> **Unofficial personal project.** Not affiliated with, endorsed by, or sponsored by VATSIM or OurAirports. All trademarks belong to their respective owners.
 
 ## What is this?
 
@@ -90,7 +89,6 @@ All optional, set as environment variables before starting the server:
 ## Data & attribution
 
 - Taxiway/holding-point data in `taxiway-graphs/` and the map tiles themselves are © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, available under the [ODbL](https://opendatacommons.org/licenses/odbl/).
-
 - Airport and frequency data from [OurAirports](https://ourairports.com/), public domain.
 - Live ATC data from the [VATSIM](https://vatsim.net) public data feed.
 - Nav fix data from FlightGear's own bundled `Navaids/fix.dat`.
