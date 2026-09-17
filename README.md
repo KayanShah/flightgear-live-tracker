@@ -29,3 +29,10 @@ Type an ATC taxi clearance in plain English and it draws the route along real ta
 
 Paste a SimBrief-style OFP navlog and it plots every waypoint plus a connecting line, with generated UNICOM self-announce calls for the departure and arrival. Parsed with a regex extractor, not an LLM, since coordinates need to be exact.
 
+### Reference tools
+
+- **Circuit leg heading calculator** (upwind/crosswind/downwind/base/final).
+- **UK aerodrome search** (plus a few hand-added international fields) with fly-to-result and pin-dropping.
+- **Airport radio frequencies**, looked up from the nearest aerodrome.
+- **Live VATSIM ATC frequency advisory** — which controller you should actually be on right now, if any are online, matched to your current flight phase.
+
