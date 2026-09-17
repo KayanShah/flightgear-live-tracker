@@ -86,3 +86,7 @@ All optional, set as environment variables before starting the server:
 
 - Taxiway/holding-point data in `taxiway-graphs/` and the map tiles themselves are © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, available under the [ODbL](https://opendatacommons.org/licenses/odbl/).
 
+- Airport and frequency data from [OurAirports](https://ourairports.com/), public domain.
+- Live ATC data from the [VATSIM](https://vatsim.net) public data feed.
+- Nav fix data from FlightGear's own bundled `Navaids/fix.dat`.
+
