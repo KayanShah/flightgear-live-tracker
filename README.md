@@ -49,3 +49,7 @@ Continuous server-side position logging, independent of the browser tab, for pos
   ```
 - *(Optional)* **[Ollama](https://ollama.com)** running locally with the `llama3` model pulled, for AI-assisted taxi-instruction parsing. Without it, Taxi Route still works via a scripted phonetic-alphabet fallback.
 
+## Setup
+
+1. **Clone this repo** and `cd` into it.
+
