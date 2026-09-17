@@ -95,3 +95,7 @@ All optional, set as environment variables before starting the server:
 - `markings.json` (your labels/lines/arcs) and `flight-logs/` are created automatically on first run and are gitignored — they're your own data, not shared by this repo.
 - Every save to `markings.json` is atomic and automatically backed up to `markings-backups/` beforehand, so accidental edits/deletions are always recoverable.
 
+## Development history
+
+This project grew feature-by-feature over many iterations — see the [commit history](https://github.com/KayanShah/flightgear-live-tracker/commits/main) for the full build-up, from the initial live-position prototype through each markup tool, taxiway graph, and integration added afterwards.
+
