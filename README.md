@@ -15,3 +15,9 @@ It's a small Node server that polls FlightGear's built-in property server and se
 - **Live position** on an OpenStreetMap-based map, with heading, altitude, groundspeed, vertical speed, wind/crosswind, COM frequency and squawk read straight from FlightGear.
 - **Flight trail**, **heading line**, and **autofollow** to keep the plane centered as it moves.
 
+### Airport markup
+
+- **Taxiway and holding-point labels** for several major airports (pulled from OpenStreetMap), each draggable/editable in place to correct for local inaccuracies.
+- **Drawing tools**: point labels, lines, freehand strokes, and a 90° arc tool for turn-radius planning — all with undo and persistent storage.
+- Every save is atomic and automatically backed up before every write, so accidental edits are always recoverable.
+
