@@ -69,3 +69,16 @@ Continuous server-side position logging, independent of the browser tab, for pos
 
 5. Open **http://localhost:3000**.
 
+## Configuration
+
+All optional, set as environment variables before starting the server:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | Port this app's own server listens on |
+| `FG_HOST` | `localhost` | Host FlightGear's httpd is running on |
+| `FG_PORT` | `8080` | Port FlightGear's httpd is running on |
+| `FG_ROOT` | `/Applications/fgdata_2024_1` | Path to your FlightGear data directory, used to read `Navaids/fix.dat.gz` for the enroute waypoint overlay |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama server address |
+| `OLLAMA_MODEL` | `llama3` | Model used for Taxi Route parsing |
+
