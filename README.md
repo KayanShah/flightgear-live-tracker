@@ -36,3 +36,7 @@ Paste a SimBrief-style OFP navlog and it plots every waypoint plus a connecting 
 - **Airport radio frequencies**, looked up from the nearest aerodrome.
 - **Live VATSIM ATC frequency advisory** — which controller you should actually be on right now, if any are online, matched to your current flight phase.
 
+### Flight history
+
+Continuous server-side position logging, independent of the browser tab, for post-flight turn/maneuver analysis.
+
