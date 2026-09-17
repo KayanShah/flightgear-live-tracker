@@ -1,5 +1,8 @@
 # FlightGear Live Tracker
 
+<img width="250" height="250" alt="image" src="https://github.com/user-attachments/assets/28551a1e-e334-4b49-bd26-4a1b05514cb1" />
+
+
 A local web app that shows your FlightGear aircraft moving on a real map in real time — built for VFR/IFR situational awareness, taxi guidance, and route planning.
 
 > **Recognised by FlightGear** as a project with tools for the community 
