@@ -5,7 +5,7 @@
 
 A local web app that shows your FlightGear aircraft moving on a real map in real time — built for VFR/IFR situational awareness, taxi guidance, and route planning.
 
-> **Recognised by FlightGear** as a project with tools for the community 
+> **Recognised officially by FlightGear** as a project with tools for the community 
 
 > **Unofficial personal project.** Not affiliated with, endorsed by, or sponsored by VATSIM, or OurAirports. All trademarks belong to their respective owners.
 
