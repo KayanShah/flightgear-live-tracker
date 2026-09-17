@@ -53,3 +53,9 @@ Continuous server-side position logging, independent of the browser tab, for pos
 
 1. **Clone this repo** and `cd` into it.
 
+2. **Download the two datasets** this app uses for airport search and frequencies (public domain, from the [OurAirports](https://ourairports.com/data/) project — not included in this repo since they're large and change over time):
+   ```bash
+   curl -L -o airports.csv https://davidmegginson.github.io/ourairports-data/airports.csv
+   curl -L -o airport-frequencies.csv https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv
+   ```
+
