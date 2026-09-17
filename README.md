@@ -7,6 +7,7 @@ A local web app that shows your FlightGear aircraft moving on a real map in real
 > [!NOTE]
 > **Officially recognised by FlightGear** as a community project offering useful tools for FlightGear pilots.
 
+> [!TIP]
 > **Unofficial personal project.** Not affiliated with, endorsed by, or sponsored by VATSIM or OurAirports. All trademarks belong to their respective owners.
 
 ## What is this?
