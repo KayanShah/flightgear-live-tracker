@@ -25,3 +25,7 @@ It's a small Node server that polls FlightGear's built-in property server and se
 
 Type an ATC taxi clearance in plain English and it draws the route along real taxiway pavement (via a routing graph built from OpenStreetMap geometry), parsed by a local LLM (Ollama) with a deterministic phonetic-alphabet fallback if Ollama isn't running. A grounding check rejects any identifier the model invents that wasn't actually in the clearance.
 
+### Route Import
+
+Paste a SimBrief-style OFP navlog and it plots every waypoint plus a connecting line, with generated UNICOM self-announce calls for the departure and arrival. Parsed with a regex extractor, not an LLM, since coordinates need to be exact.
+
