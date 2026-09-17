@@ -40,3 +40,12 @@ Paste a SimBrief-style OFP navlog and it plots every waypoint plus a connecting 
 
 Continuous server-side position logging, independent of the browser tab, for post-flight turn/maneuver analysis.
 
+## Prerequisites
+
+- **Node.js 20+** (uses built-in `fetch`, no npm dependencies at all).
+- **FlightGear**, launched with the property server enabled — add this to the launcher's "Additional Settings" box:
+  ```
+  --httpd=8080
+  ```
+- *(Optional)* **[Ollama](https://ollama.com)** running locally with the `llama3` model pulled, for AI-assisted taxi-instruction parsing. Without it, Taxi Route still works via a scripted phonetic-alphabet fallback.
+
