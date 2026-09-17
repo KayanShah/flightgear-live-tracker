@@ -21,3 +21,7 @@ It's a small Node server that polls FlightGear's built-in property server and se
 - **Drawing tools**: point labels, lines, freehand strokes, and a 90° arc tool for turn-radius planning — all with undo and persistent storage.
 - Every save is atomic and automatically backed up before every write, so accidental edits are always recoverable.
 
+### Taxi Route
+
+Type an ATC taxi clearance in plain English and it draws the route along real taxiway pavement (via a routing graph built from OpenStreetMap geometry), parsed by a local LLM (Ollama) with a deterministic phonetic-alphabet fallback if Ollama isn't running. A grounding check rejects any identifier the model invents that wasn't actually in the clearance.
+
