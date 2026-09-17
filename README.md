@@ -61,3 +61,11 @@ Continuous server-side position logging, independent of the browser tab, for pos
 
 3. **Launch FlightGear** with `--httpd=8080` as above, and load into a flight.
 
+4. **Start the server**:
+   ```bash
+   npm start
+   # or: node server.js
+   ```
+
+5. Open **http://localhost:3000**.
+
